@@ -20,6 +20,8 @@ enum Error {
     FileIo(#[from] std::io::Error),
     #[error("{0}")]
     DumpGuestCpuConfig(#[from] dump::guest::Error),
+    #[error("{0}")]
+    DumpHostFingerprint(#[from] dump::host::Error),
     #[error("CPU template is not specified: {0}")]
     NoCpuTemplate(#[from] GetCpuTemplateError),
     #[error("Failed to serialize/deserialize JSON file: {0}")]
@@ -43,12 +45,20 @@ struct Cli {
 enum Command {
     /// Dump guest CPU configuration in custom CPU template format.
     Dump {
-        /// Path of firecracker config file.
-        #[arg(short, long, value_name = "PATH")]
-        config: PathBuf,
         /// Path of output guest CPU configuration file.
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present("host"),
+            requires("config")
+        )]
+        guest: Option<PathBuf>,
+        /// Path of firecracker config file (required when `--guest` specified).
         #[arg(short, long, value_name = "PATH")]
-        guest: PathBuf,
+        config: Option<PathBuf>,
+        /// Path of output host fingerprint file.
+        #[arg(long, value_name = "PATH", required_unless_present("guest"))]
+        host: Option<PathBuf>,
     },
     /// Strip items shared between multiple guest CPU configurations.
     Strip {
@@ -69,14 +79,25 @@ enum Command {
 
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Dump { config, guest } => {
-            let config = read_to_string(config)?;
-            let (vmm, _) = utils::build_microvm_from_config(&config)?;
+        Command::Dump {
+            config,
+            guest,
+            host,
+        } => {
+            if let (Some(guest), Some(config)) = (guest, config) {
+                let config = read_to_string(config)?;
+                let (vmm, _) = utils::build_microvm_from_config(&config)?;
 
-            let guest_cpu_config = dump::guest::dump(vmm)?;
+                let guest_cpu_config = dump::guest::dump(vmm)?;
+                let guest_cpu_config_json = serde_json::to_string_pretty(&guest_cpu_config)?;
+                write(guest, guest_cpu_config_json)?;
+            }
 
-            let guest_cpu_config_json = serde_json::to_string_pretty(&guest_cpu_config)?;
-            write(guest, guest_cpu_config_json)?;
+            if let Some(host) = host {
+                let host_fingerprint = dump::host::dump()?;
+                let host_fingerprint_json = serde_json::to_string_pretty(&host_fingerprint)?;
+                write(host, host_fingerprint_json)?;
+            }
         }
         Command::Strip { paths, suffix } => {
             let mut templates = Vec::with_capacity(paths.len());
@@ -260,6 +281,7 @@ mod tests {
             None,
         );
         let guest_cpu_config_file = TempFile::new().unwrap();
+        let host_fingerprint_file = TempFile::new().unwrap();
 
         let args = vec![
             "cpu-template-helper",
@@ -268,10 +290,67 @@ mod tests {
             config_file.as_path().to_str().unwrap(),
             "--guest",
             guest_cpu_config_file.as_path().to_str().unwrap(),
+            "--host",
+            host_fingerprint_file.as_path().to_str().unwrap(),
         ];
         let cli = Cli::parse_from(args);
 
         run(cli).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_dump_without_targets() {
+        // `--guest` or `--host` should be provided for dump command.
+        let args = vec!["cpu-template-helper", "dump"];
+        Cli::try_parse_from(args).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_dump_guest_without_config() {
+        // `--config` should be provided when dumping guest CPU config.
+        let args = vec![
+            "cpu-template-helper",
+            "dump",
+            "--guest",
+            "guest_cpu_config.json",
+        ];
+        Cli::try_parse_from(args).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_dump_guest_without_guest() {
+        // Not only `--config` but also `--guest` should be provided when dumping guest CPU config.
+        let args = vec!["cpu-template-helper", "dump", "--config", "config.json"];
+        Cli::try_parse_from(args).unwrap();
+    }
+
+    #[test]
+    fn test_dump_guest() {
+        // When `--guest` and `--config` are provided, the parse should succeed.
+        let args = vec![
+            "cpu-template-helper",
+            "dump",
+            "--guest",
+            "guest_cpu_config.json",
+            "--config",
+            "config.json",
+        ];
+        Cli::try_parse_from(args).unwrap();
+    }
+
+    #[test]
+    fn test_dump_host() {
+        // Only `--host` is required when dumping host fingerprint.
+        let args = vec![
+            "cpu-template-helper",
+            "dump",
+            "--host",
+            "host_fingerprint.json",
+        ];
+        Cli::try_parse_from(args).unwrap();
     }
 
     #[test]
