@@ -19,7 +19,7 @@ enum Error {
     #[error("Failed to operate file: {0}")]
     FileIo(#[from] std::io::Error),
     #[error("{0}")]
-    DumpGuestCpuConfig(#[from] dump::Error),
+    DumpGuestCpuConfig(#[from] dump::guest::Error),
     #[error("CPU template is not specified: {0}")]
     NoCpuTemplate(#[from] GetCpuTemplateError),
     #[error("Failed to serialize/deserialize JSON file: {0}")]
@@ -73,7 +73,7 @@ fn run(cli: Cli) -> Result<()> {
             let config = read_to_string(config)?;
             let (vmm, _) = utils::build_microvm_from_config(&config)?;
 
-            let guest_cpu_config = dump::dump(vmm)?;
+            let guest_cpu_config = dump::guest::dump(vmm)?;
 
             let guest_cpu_config_json = serde_json::to_string_pretty(&guest_cpu_config)?;
             write(guest, guest_cpu_config_json)?;
@@ -103,7 +103,7 @@ fn run(cli: Cli) -> Result<()> {
                 .cpu_template
                 .get_cpu_template()?
                 .into_owned();
-            let cpu_config = dump::dump(vmm)?;
+            let cpu_config = dump::guest::dump(vmm)?;
 
             verify::verify(cpu_template, cpu_config)?;
         }
