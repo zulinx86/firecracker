@@ -19,7 +19,7 @@ enum Error {
     #[error("Failed to operate file: {0}")]
     FileIo(#[from] std::io::Error),
     #[error("{0}")]
-    DumpCpuConfig(#[from] dump::Error),
+    DumpGuestCpuConfig(#[from] dump::Error),
     #[error("CPU template is not specified: {0}")]
     NoCpuTemplate(#[from] GetCpuTemplateError),
     #[error("Failed to serialize/deserialize JSON file: {0}")]
@@ -41,18 +41,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Dump CPU configuration in custom CPU template format.
+    /// Dump guest CPU configuration in custom CPU template format.
     Dump {
         /// Path of firecracker config file.
         #[arg(short, long, value_name = "PATH")]
         config: PathBuf,
-        /// Path of output file.
-        #[arg(short, long, value_name = "PATH", default_value = "cpu_config.json")]
-        output: PathBuf,
+        /// Path of output guest CPU configuration file.
+        #[arg(short, long, value_name = "PATH")]
+        guest: PathBuf,
     },
-    /// Strip items shared between multiple CPU configurations.
+    /// Strip items shared between multiple guest CPU configurations.
     Strip {
-        /// List of paths of input CPU configuration files.
+        /// List of paths of input guest CPU configuration files.
         #[arg(short, long, num_args = 2..)]
         paths: Vec<PathBuf>,
         /// Suffix of output files. To overwrite input files, specify an empty string ''.
@@ -69,14 +69,14 @@ enum Command {
 
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Dump { config, output } => {
+        Command::Dump { config, guest } => {
             let config = read_to_string(config)?;
             let (vmm, _) = utils::build_microvm_from_config(&config)?;
 
-            let cpu_config = dump::dump(vmm)?;
+            let guest_cpu_config = dump::dump(vmm)?;
 
-            let cpu_config_json = serde_json::to_string_pretty(&cpu_config)?;
-            write(output, cpu_config_json)?;
+            let guest_cpu_config_json = serde_json::to_string_pretty(&guest_cpu_config)?;
+            write(guest, guest_cpu_config_json)?;
         }
         Command::Strip { paths, suffix } => {
             let mut templates = Vec::with_capacity(paths.len());
@@ -259,15 +259,15 @@ mod tests {
             rootfs_file.as_path().to_str().unwrap(),
             None,
         );
-        let output_file = TempFile::new().unwrap();
+        let guest_cpu_config_file = TempFile::new().unwrap();
 
         let args = vec![
             "cpu-template-helper",
             "dump",
             "--config",
             config_file.as_path().to_str().unwrap(),
-            "--output",
-            output_file.as_path().to_str().unwrap(),
+            "--guest",
+            guest_cpu_config_file.as_path().to_str().unwrap(),
         ];
         let cli = Cli::parse_from(args);
 

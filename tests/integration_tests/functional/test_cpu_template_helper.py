@@ -46,10 +46,11 @@ class CpuTemplateHelper:
                 cwd=defs.FC_WORKSPACE_DIR,
             )
 
-    def dump(self, vm_config_path, output_path):
-        """Dump CPU config in JSON format by calling dump subcommand"""
+    def dump(self, vm_config_path, guest_cpu_config_path):
+        """Dump guest CPU config in JSON format by calling dump subcommand"""
         cmd = (
-            f"{self.BINARY_PATH} dump --config {vm_config_path} --output {output_path}"
+            f"{self.BINARY_PATH} dump --config {vm_config_path}"
+            f" --guest {guest_cpu_config_path}"
         )
         utils.run_cmd(cmd)
 
@@ -238,7 +239,7 @@ def test_cpu_config_dump_vs_actual(
     microvm.ssh_network_config(network_config, "1")
     vm_config_path = save_vm_config(microvm, tmp_path)
 
-    # Dump CPU config with the helper tool.
+    # Dump guest CPU config with the helper tool.
     cpu_config_path = tmp_path / "cpu_config.json"
     cpu_template_helper.dump(vm_config_path, cpu_config_path)
     dump_cpu_config = build_cpu_config_dict(cpu_config_path)
