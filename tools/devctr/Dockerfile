@@ -54,6 +54,8 @@ RUN apt-get update \
         flex \
         bison \
         bc \
+        # for cpu-template-helper
+        dmidecode \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --upgrade pip poetry \
     && gem install mdl
