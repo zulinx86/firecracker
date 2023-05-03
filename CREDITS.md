@@ -90,6 +90,7 @@ Contributors to the Firecracker repository:
 * Gilad Naaman <gilad@naaman.io>
 * Greg Dunn <gregdunn@amazon.com>
 * Gregory Brzeski <gregory@brzeski.pl>
+* Grzegorz Uriasz <gorbak25@gmail.com>
 * Gulshan Kumar <kumargu@amazon.com>
 * Gábor Lipták <gliptak@gmail.com>
 * hacker65536 <s.hacker65536@gmail.com>
@@ -129,6 +130,7 @@ Contributors to the Firecracker repository:
 * Lorenzo Fontana <fontanalorenz@gmail.com>
 * LOU Xun <aquarhead@ela.build>
 * Lucas Zanela <me@lucaszanella.com>
+* Lukas Schwerdtfeger <lukas.schwerdtfeger@gmail.com>
 * Luminita Voicu <lumivo@amazon.com>
 * maciejhirsz <maciej.hirsz@gmail.com>
 * Malhar Vora <mlvora.2010@gmail.com>
@@ -190,9 +192,11 @@ Contributors to the Firecracker repository:
 * Sripracha <ramsri@amazon.com>
 * Stefan Nita <32079871+stefannita01@users.noreply.github.com>
 * StemCll <lydjotj6f@mozmail.com>
+* Sudan Landge <sudanl@amazon.co.uk>
 * Sudan Landge <sudanl@amazon.com>
 * sundar.preston.789@gmail.com <sundar.preston.789@gmail.com>
 * Takahiro Itazuri <itazur@amazon.com>
+* Takahiro Itazuri <zulinx86@gmail.com>
 * Tal Hoffman <talhof8@gmail.com>
 * Tamio-Vesa Nakajima <tamiove@amazon.com>
 * tidux <jon@dorsal.tk>
@@ -203,6 +207,7 @@ Contributors to the Firecracker repository:
 * Tomas Valenta <valenta.and.thomas@gmail.com>
 * Tomoya <iwata.tomoya@classmethod.jp>
 * Trăistaru Andrei Cristian <atc@amazon.com>
+* Trăistaru Andrei-Cristian <56828222+andreitraistaru@users.noreply.github.com>
 * Tyler Anton <tyler@debian.anton>
 * Urvil Patel <patelurvil38@gmail.com>
 * Vibha Acharya <vibharya@amazon.co.uk>
