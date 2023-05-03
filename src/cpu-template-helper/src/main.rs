@@ -35,7 +35,9 @@ enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Parser)]
-#[command(version)]
+#[command(
+    version = clap::builder::Str::from(format!("v{}", crate::utils::CPU_TEMPLATE_HELPER_VERSION))
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
