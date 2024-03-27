@@ -12,7 +12,7 @@ def run_command_before_and_after_snapshot(
 ):
     base_vm = microvm_factory.build(guest_kernel, rootfs)
     base_vm.spawn()
-    base_vm.basic_config()
+    base_vm.basic_config(boot_args="console=ttyS0 reboot=k panic=1 pci=off tsx_async_abort=off tsx=on mds=off")
     base_vm.add_net_iface()
     base_vm.start()
 
@@ -120,7 +120,7 @@ def test_rtm_sample_code_on_guest(
     """attempt to run RTM sample code on guest"""
     base_vm = microvm_factory.build(guest_kernel, rootfs_rw)
     base_vm.spawn()
-    base_vm.basic_config()
+    base_vm.basic_config(boot_args="console=ttyS0 reboot=k panic=1 pci=off tsx_async_abort=off tsx=on mds=off")
     base_vm.add_net_iface()
     base_vm.start()
 
