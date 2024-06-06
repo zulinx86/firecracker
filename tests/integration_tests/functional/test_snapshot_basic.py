@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 import host_tools.drive as drive_tools
-from framework.microvm import SnapshotType
+from framework.microvm import Serial, SnapshotType
 from framework.properties import global_props
 from framework.utils import check_filesystem, run_cmd, wait_process_termination
 from framework.utils_vsock import (
@@ -535,6 +535,57 @@ def test_snapshot_overwrite_self(guest_kernel, rootfs, microvm_factory):
     # Check the overwriting the snapshot file from which this microvm was originally
     # restored, with a new snapshot of this vm, does not break the VM
     vm.wait_for_up()
+
+
+@pytest.mark.timeout(3000)
+@pytest.mark.parametrize("snapshot_type", [SnapshotType.DIFF, SnapshotType.FULL])
+def test_100_snapshot(guest_kernel_linux_6_1, rootfs, microvm_factory, snapshot_type):
+    """
+    Test restore snapshot 100 times
+    """
+    base_vm = microvm_factory.build(guest_kernel_linux_6_1, rootfs)
+    base_vm.help.enable_console()
+    base_vm.spawn()
+    base_vm.basic_config(track_dirty_pages=True)
+    base_vm.add_net_iface()
+    base_vm.start()
+    base_vm.wait_for_up()
+
+    snapshot = base_vm.make_snapshot(snapshot_type)
+    base_snapshot = snapshot
+    base_vm.kill()
+
+    for i in range(100):
+        # Restore VM from snapshot.
+        vm = microvm_factory.build()
+        vm.jailer.daemonize = False
+        vm.spawn()
+        vm.restore_from_snapshot(snapshot, resume=True)
+        print(f"\n[{i}] {vm._microvm_id}")
+
+        # Connect to serial console and get dmesg result.
+        serial = Serial(vm)
+        serial.open()
+        serial.tx("")
+        serial.rx("ubuntu-fc-uvm:~#")
+        serial.tx("dmesg | tail -n 50")
+        result = serial.rx("#")
+        print(f"Serial:{result}")
+
+        # Check SSH connection.
+        vm.wait_for_up()
+        print(f"SSH connection works!")
+
+        # Take snapshot.
+        snapshot = vm.make_snapshot(snapshot_type)
+        vm.kill()
+
+        # Rebase diff snapshot onto base.
+        if snapshot.is_diff:
+            snapshot = snapshot.rebase_snapshot(base_snapshot)
+
+        # Update the base for next iteration
+        base_snapshot = snapshot
 
 
 @pytest.mark.parametrize("snapshot_type", [SnapshotType.DIFF, SnapshotType.FULL])
