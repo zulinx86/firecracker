@@ -539,11 +539,11 @@ def test_snapshot_overwrite_self(guest_kernel, rootfs, microvm_factory):
 
 @pytest.mark.timeout(3000)
 @pytest.mark.parametrize("snapshot_type", [SnapshotType.DIFF, SnapshotType.FULL])
-def test_100_snapshot(guest_kernel_linux_6_1, rootfs, microvm_factory, snapshot_type):
+def test_100_snapshot(guest_kernel_linux_5_10, rootfs, microvm_factory, snapshot_type):
     """
     Test restore snapshot 100 times
     """
-    base_vm = microvm_factory.build(guest_kernel_linux_6_1, rootfs)
+    base_vm = microvm_factory.build(guest_kernel_linux_5_10, rootfs)
     base_vm.help.enable_console()
     base_vm.spawn()
     base_vm.basic_config(track_dirty_pages=True)
