@@ -568,7 +568,7 @@ def test_100_snapshot(guest_kernel_linux_6_1, rootfs, microvm_factory, snapshot_
         serial.open()
         serial.tx("")
         serial.rx("ubuntu-fc-uvm:~#")
-        serial.tx("dmesg | tail -n 50")
+        serial.tx("journalctl -n 100")
         result = serial.rx("#")
         print(f"Serial:{result}")
 
