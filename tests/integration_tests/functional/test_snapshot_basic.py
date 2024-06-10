@@ -562,6 +562,7 @@ def test_100_snapshot(guest_kernel_linux_5_10, rootfs, microvm_factory, snapshot
         vm.spawn()
         vm.restore_from_snapshot(snapshot, resume=True)
         print(f"\n[{i}] {vm._microvm_id}")
+        print(f"Firecracker log:\n{vm.log_data}")
 
         # Connect to serial console and get dmesg result.
         serial = Serial(vm)
