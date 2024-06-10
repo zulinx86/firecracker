@@ -11,7 +11,7 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Barrier};
 use std::{fmt, io, thread};
 
-use kvm_bindings::{KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
+use kvm_bindings::{Msrs, KVM_SYSTEM_EVENT_RESET, KVM_SYSTEM_EVENT_SHUTDOWN};
 use kvm_ioctls::VcpuExit;
 use libc::{c_int, c_void, siginfo_t};
 use log::{error, info, warn};
@@ -21,6 +21,7 @@ use utils::eventfd::EventFd;
 use utils::signal::{register_signal_handler, sigrtmin, Killable};
 use utils::sm::StateMachine;
 
+use crate::arch_gen::x86::msr_index::{MSR_IA32_TSC, MSR_IA32_TSC_DEADLINE};
 use crate::cpu_config::templates::{CpuConfiguration, GuestConfigError};
 use crate::logger::{IncMetric, METRICS};
 use crate::vstate::vm::Vm;
@@ -333,6 +334,19 @@ impl Vcpu {
         match self.event_receiver.recv() {
             // Paused ---- Resume ----> Running
             Ok(VcpuEvent::Resume) => {
+                let mut msrs = Msrs::new(2).unwrap();
+                let msr_entries = msrs.as_mut_slice();
+                for (pos, index) in [MSR_IA32_TSC, MSR_IA32_TSC_DEADLINE].iter().enumerate() {
+                    msr_entries[pos].index = *index;
+                }
+                self.kvm_vcpu.fd.get_msrs(&mut msrs).unwrap();
+                info!("Resuming vCPU...");
+                msrs.as_slice().iter().for_each(|entry| {
+                    let index = entry.index;
+                    let data = entry.data;
+                    info!("{index:#x}: {data}");
+                });
+
                 if self.kvm_vcpu.fd.get_kvm_run().immediate_exit == 1u8 {
                     warn!(
                         "Received a VcpuEvent::Resume message with immediate_exit enabled. \

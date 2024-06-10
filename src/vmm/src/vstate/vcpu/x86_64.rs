@@ -13,7 +13,7 @@ use kvm_bindings::{
     kvm_xsave, CpuId, Msrs, KVM_MAX_CPUID_ENTRIES, KVM_MAX_MSR_ENTRIES,
 };
 use kvm_ioctls::{VcpuExit, VcpuFd};
-use log::{error, warn};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 
 use crate::arch::x86_64::interrupts;
@@ -525,7 +525,15 @@ impl KvmVcpu {
         self.fd
             .set_lapic(&state.lapic)
             .map_err(KvmVcpuError::VcpuSetLapic)?;
+        info!("Restoring from snapshot...");
         for msrs in &state.saved_msrs {
+            for entry in msrs.as_slice() {
+                let index = entry.index;
+                let data = entry.data;
+                if index == 0x10 || index == 0x6e0 {
+                    info!("{index:#x}: {data}");
+                }
+            }
             let nmsrs = self.fd.set_msrs(msrs).map_err(KvmVcpuError::VcpuSetMsrs)?;
             if nmsrs < msrs.as_fam_struct_ref().nmsrs as usize {
                 return Err(KvmVcpuError::VcpuSetMsrsIncomplete);
