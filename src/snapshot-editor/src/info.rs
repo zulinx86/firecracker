@@ -64,6 +64,11 @@ fn info_version(_: &MicrovmState, version: Version) -> Result<(), InfoVmStateErr
 
 fn info_vcpu_states(state: &MicrovmState, _: Version) -> Result<(), InfoVmStateError> {
     for (i, state) in state.vcpu_states.iter().enumerate() {
+        state.saved_msrs.iter().for_each(|msrs| {
+            msrs.as_slice()
+                .iter()
+                .for_each(|msr| println!("{:#x}: {}", msr.index, msr.data))
+        });
         println!("vcpu {i}:");
         println!("{state:#?}");
     }
