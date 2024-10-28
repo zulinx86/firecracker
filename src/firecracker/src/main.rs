@@ -311,9 +311,6 @@ fn main_exec() -> Result<(), MainError> {
 
     register_signal_handlers().map_err(MainError::RegisterSignalHandlers)?;
 
-    #[cfg(target_arch = "aarch64")]
-    enable_ssbd_mitigation();
-
     if let Err(err) = resize_fdtable() {
         match err {
             // These errors are non-critical: In the worst case we have worse snapshot restore
@@ -485,35 +482,6 @@ fn resize_fdtable() -> Result<(), ResizeFdTableError> {
     }
 
     Ok(())
-}
-
-/// Enable SSBD mitigation through `prctl`.
-#[cfg(target_arch = "aarch64")]
-pub fn enable_ssbd_mitigation() {
-    // SAFETY: Parameters are valid since they are copied verbatim
-    // from the kernel's UAPI.
-    // PR_SET_SPECULATION_CTRL only uses those 2 parameters, so it's ok
-    // to leave the latter 2 as zero.
-    let ret = unsafe {
-        libc::prctl(
-            gen::prctl::PR_SET_SPECULATION_CTRL,
-            gen::prctl::PR_SPEC_STORE_BYPASS,
-            gen::prctl::PR_SPEC_FORCE_DISABLE,
-            0,
-            0,
-        )
-    };
-
-    if ret < 0 {
-        let last_error = std::io::Error::last_os_error().raw_os_error().unwrap();
-        error!(
-            "Could not enable SSBD mitigation through prctl, error {}",
-            last_error
-        );
-        if last_error == libc::EINVAL {
-            error!("The host does not support SSBD mitigation through prctl.");
-        }
-    }
 }
 
 // Log a warning for any usage of deprecated parameters.
