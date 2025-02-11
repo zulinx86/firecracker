@@ -979,3 +979,18 @@ def test_c3_on_skylake_show_warning(uvm_plain, cpu_template_any):
         assert message in uvm.log_data
     else:
         assert message not in uvm.log_data
+
+
+def test_sse2_availability(uvm_any_booted):
+    """Test that the guest has SSE2 available."""
+    vm = uvm_any_booted
+
+    must_be_set = [
+        (0x1, 0x0, "edx", (1 << 26)),  # SSE2
+    ]
+
+    cpuid_utils.check_cpuid_feat_flags(
+        vm,
+        must_be_set,
+        [],
+    )

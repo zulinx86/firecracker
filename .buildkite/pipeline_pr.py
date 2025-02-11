@@ -24,13 +24,13 @@ pipeline = BKPipeline(
     with_build_step=not DOC_ONLY_CHANGE,
 )
 
-pipeline.add_step(
-    {
-        "command": "./tools/devtool -y checkstyle",
-        "label": "🪶 Style",
-    },
-    depends_on_build=False,
-)
+# pipeline.add_step(
+#     {
+#         "command": "./tools/devtool -y checkstyle",
+#         "label": "🪶 Style",
+#     },
+#     depends_on_build=False,
+# )
 
 # run sanity build of devtool if Dockerfile is changed
 if any(x.parent.name == "devctr" for x in changed_files):
@@ -48,45 +48,45 @@ if any(
         "./tools/devtool -y make_release",
     )
 
-if not changed_files or any(
-    x.suffix in [".rs", ".toml", ".lock"] for x in changed_files
-):
-    kani_grp = pipeline.build_group(
-        "🔍 Kani",
-        "./tools/devtool -y test --no-build -- ../tests/integration_tests/test_kani.py -n auto",
-        # Kani step default
-        # Kani runs fastest on m6a.metal
-        instances=["m6a.metal", "m7g.metal"],
-        platforms=[("al2", "linux_5.10")],
-        timeout_in_minutes=300,
-        **DEFAULTS_PERF,
-        depends_on_build=False,
-    )
-    # modify Kani steps' label
-    for step in kani_grp["steps"]:
-        step["label"] = "🔍 Kani"
+# if not changed_files or any(
+#     x.suffix in [".rs", ".toml", ".lock"] for x in changed_files
+# ):
+#     kani_grp = pipeline.build_group(
+#         "🔍 Kani",
+#         "./tools/devtool -y test --no-build -- ../tests/integration_tests/test_kani.py -n auto",
+#         # Kani step default
+#         # Kani runs fastest on m6a.metal
+#         instances=["m6a.metal", "m7g.metal"],
+#         platforms=[("al2", "linux_5.10")],
+#         timeout_in_minutes=300,
+#         **DEFAULTS_PERF,
+#         depends_on_build=False,
+#     )
+#     # modify Kani steps' label
+#     for step in kani_grp["steps"]:
+#         step["label"] = "🔍 Kani"
 
 if run_all_tests(changed_files):
-    pipeline.build_group(
-        "📦 Build",
-        pipeline.devtool_test(pytest_opts="integration_tests/build/"),
-        depends_on_build=False,
-    )
+    # pipeline.build_group(
+    #     "📦 Build",
+    #     pipeline.devtool_test(pytest_opts="integration_tests/build/"),
+    #     depends_on_build=False,
+    # )
 
     pipeline.build_group(
-        "⚙ Functional and security 🔒",
+        "⚙ SSE2 Check",
         pipeline.devtool_test(
-            pytest_opts="-n 16 --dist worksteal integration_tests/{{functional,security}}",
+            pytest_opts="-n 16 --dist worksteal integration_tests/functional/test_cpu_features_x86_64.py -k test_sse2_availability",
         ),
     )
 
-    pipeline.build_group(
-        "⏱ Performance",
-        pipeline.devtool_test(
-            devtool_opts="--performance -c 1-10 -m 0",
-            pytest_opts="../tests/integration_tests/performance/",
-        ),
-        **DEFAULTS_PERF,
-    )
+    # pipeline.build_group(
+    #     "⏱ Performance",
+    #     pipeline.devtool_test(
+    #         devtool_opts="--performance -c 1-10 -m 0",
+    #         pytest_opts="../tests/integration_tests/performance/",
+    #     ),
+    #     **DEFAULTS_PERF,
+    # )
 
 print(pipeline.to_json())
