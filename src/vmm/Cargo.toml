@@ -9,7 +9,7 @@ license = "Apache-2.0"
 bench = false
 
 [dependencies]
-acpi_tables = { path = "../acpi-tables" } 
+acpi_tables = { path = "../acpi-tables" }
 aes-gcm =  { version = "0.10.1", default-features = false, features = ["aes"] }
 arrayvec = { version = "0.7.6", optional = true }
 aws-lc-rs = { version = "1.12.4", features = ["bindgen"] }
@@ -53,6 +53,7 @@ vm-fdt = "0.3.0"
 criterion = { version = "0.5.0", default-features = false }
 device_tree = "1.1.0"
 itertools = "0.14.0"
+procfs = "0.17.0"
 proptest = { version = "1.6.0", default-features = false, features = ["std"] }
 
 [features]
