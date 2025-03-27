@@ -129,11 +129,15 @@ pub fn t2cl() -> CustomCpuTemplate {
                     // - Bit 14: AVX512_VPOPCNTDQ (Intel SDM) / Reserved (AMD APM)
                     // - Bit 16: LA57 (Intel SDM) / LA57 (AMD APM)
                     // - Bit 22: RDPID and IA32_TSC_AUX (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 24: BUS_LOCK_DETECT (Intel SDM) / BUSLOCKTRP (AMD APM)
+                    // - Bit 25: CLDEMOTE (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 27: MOVDIRI (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 28: MOVDIR64B (Intel SDM) / Reserved (AMD APM)
                     // - Bit 30: SGX_LC (Intel SDM) / Reserved (AMD APM)
                     CpuidRegisterModifier {
                         register: CpuidRegister::Ecx,
                         bitmap: RegisterValueFilter {
-                            filter: 0b0100_0000_0100_0001_0101_1111_0101_1110,
+                            filter: 0b0101_1011_0100_0001_0101_1111_0101_1110,
                             value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
                         },
                     },
@@ -142,10 +146,51 @@ pub fn t2cl() -> CustomCpuTemplate {
                     // - Bit 03: AVX512_4FMAPS (Intel SDM) / Reserved (AMD APM)
                     // - Bit 04: Fast Short REP MOV (Intel SDM) / Reserved (AMD APM)
                     // - Bit 08: AVX512_VP2INTERSECT (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 14: SERIALIZE (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 16: TSXLDTRK (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 22: AMX-BP16 (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 23: AVX512_FP16 (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 24: AMX-TILE (Intel SDM) / Reserved (AMD APM)
+                    // - Bit 25: AMX-INT8 (Intel SDM) / Reserved (AMD APM)
                     CpuidRegisterModifier {
                         register: CpuidRegister::Edx,
                         bitmap: RegisterValueFilter {
-                            filter: 0b0000_0000_0000_0000_0000_0001_0001_1100,
+                            filter: 0b0000_0011_1100_0001_0100_0001_0001_1100,
+                            value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
+                        },
+                    },
+                ],
+            },
+            CpuidLeafModifier {
+                leaf: 0x7,
+                subleaf: 0x1,
+                flags: KvmCpuidFlags(1),
+                modifiers: vec![
+                    // EAX:
+                    // - Bit 4: AVX-VNNI
+                    // - Bit 5: AVX512_BF16
+                    CpuidRegisterModifier {
+                        register: CpuidRegister::Eax,
+                        bitmap: RegisterValueFilter {
+                            filter: 0b0000_0000_0000_0000_0000_0000_0011_0000,
+                            value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
+                        },
+                    },
+                ],
+            },
+            CpuidLeafModifier {
+                leaf: 0x7,
+                subleaf: 0x2,
+                flags: KvmCpuidFlags(1),
+                modifiers: vec![
+                    // EDX:
+                    // - Bit 1: IPRED_CTRL
+                    // - Bit 2: RRSBA_CTRL
+                    // - BIt 4: BHI_CTRL
+                    CpuidRegisterModifier {
+                        register: CpuidRegister::Edx,
+                        bitmap: RegisterValueFilter {
+                            filter: 0b0000_0000_0000_0000_0000_0000_0001_0110,
                             value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
                         },
                     },

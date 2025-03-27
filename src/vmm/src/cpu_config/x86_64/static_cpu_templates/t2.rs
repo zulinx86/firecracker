@@ -169,11 +169,15 @@ pub fn t2() -> CustomCpuTemplate {
                     // - Bit 14: AVX512_VPOPCNTDQ
                     // - Bit 16: LA57
                     // - Bit 22: RDPID
+                    // - Bit 24: BUS_LOCK_DETECT
+                    // - Bit 25: CLDEMOTE
+                    // - Bit 27: MOVDIRI
+                    // - Bit 28: MOVDIR64B
                     // - Bit 30: SGX_LC
                     CpuidRegisterModifier {
                         register: CpuidRegister::Ecx,
                         bitmap: RegisterValueFilter {
-                            filter: 0b0100_0000_0100_0001_0101_1111_0101_1110,
+                            filter: 0b0101_1011_0100_0001_0101_1111_0101_1110,
                             value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
                         },
                     },
@@ -182,10 +186,51 @@ pub fn t2() -> CustomCpuTemplate {
                     // - Bit 03: AVX512_4FMAPS
                     // - Bit 04: Fast Short REP MOV
                     // - Bit 08: AVX512_VP2INTERSECT
+                    // - Bit 14: SERIALIZE
+                    // - Bit 16: TSXLDTRK
+                    // - Bit 22: AMX-BP16
+                    // - Bit 23: AVX512_FP16
+                    // - Bit 24: AMX-TILE
+                    // - Bit 25: AMX-INT8
                     CpuidRegisterModifier {
                         register: CpuidRegister::Edx,
                         bitmap: RegisterValueFilter {
-                            filter: 0b0000_0000_0000_0000_0000_0001_0001_1100,
+                            filter: 0b0000_0011_1100_0001_0100_0001_0001_1100,
+                            value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
+                        },
+                    },
+                ],
+            },
+            CpuidLeafModifier {
+                leaf: 0x7,
+                subleaf: 0x1,
+                flags: KvmCpuidFlags(1),
+                modifiers: vec![
+                    // EAX:
+                    // - Bit 4: AVX-VNNI
+                    // - Bit 5: AVX512_BF16
+                    CpuidRegisterModifier {
+                        register: CpuidRegister::Eax,
+                        bitmap: RegisterValueFilter {
+                            filter: 0b0000_0000_0000_0000_0000_0000_0011_0000,
+                            value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
+                        },
+                    },
+                ],
+            },
+            CpuidLeafModifier {
+                leaf: 0x7,
+                subleaf: 0x2,
+                flags: KvmCpuidFlags(1),
+                modifiers: vec![
+                    // EDX:
+                    // - Bit 1: IPRED_CTRL
+                    // - Bit 2: RRSBA_CTRL
+                    // - Bit 4: BHI_CTRL
+                    CpuidRegisterModifier {
+                        register: CpuidRegister::Edx,
+                        bitmap: RegisterValueFilter {
+                            filter: 0b0000_0000_0000_0000_0000_0000_0001_0110,
                             value: 0b0000_0000_0000_0000_0000_0000_0000_0000,
                         },
                     },
