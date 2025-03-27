@@ -48,14 +48,14 @@ Firecracker supports two types of CPU templates:
 
 At the moment the following set of static CPU templates are supported:
 
-| CPU template | CPU vendor | CPU model             |
-| ------------ | ---------- | --------------------- |
-| C3           | Intel      | any                   |
-| T2           | Intel      | any                   |
-| T2A          | AMD        | Milan                 |
-| T2CL         | Intel      | Cascade Lake or newer |
-| T2S          | Intel      | any                   |
-| V1N1         | ARM        | Neoverse V1           |
+| CPU template | CPU vendor | CPU model                |
+| ------------ | ---------- | ------------------------ |
+| C3           | Intel      | any                      |
+| T2           | Intel      | any                      |
+| T2A          | AMD        | Milan                    |
+| T2CL         | Intel      | Cascade Lake or newer    |
+| T2S          | Intel      | Skylake and Cascade Lake |
+| V1N1         | ARM        | Neoverse V1              |
 
 T2 and C3 templates are mapped as close as possible to AWS T2 and C3 instances
 in terms of CPU features. Note that on a microVM that is lauched with the C3

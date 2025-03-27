@@ -28,8 +28,11 @@ def get_supported_cpu_templates():
         # T2CL template is only supported on Cascade Lake and newer CPUs.
         case CpuVendor.INTEL, CpuModel.INTEL_SKYLAKE:
             return sorted(set(INTEL_TEMPLATES) - {"T2CL"})
-        case CpuVendor.INTEL, _:
+        case CpuVendor.INTEL, CpuModel.INTEL_CASCADELAKE:
             return INTEL_TEMPLATES
+        # T2S template is only supported on Skylake and Cascade Lake.
+        case CpuVendor.INTEL, _:
+            return sorted(set(INTEL_TEMPLATES) - {"T2S"})
         case CpuVendor.AMD, _:
             return AMD_TEMPLATES
         case CpuVendor.ARM, CpuModel.ARM_NEOVERSE_V1 if host_linux >= (6, 1):
