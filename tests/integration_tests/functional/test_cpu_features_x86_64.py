@@ -240,7 +240,7 @@ MSR_EXCEPTION_LIST = [
 # fmt: on
 
 
-MSR_SUPPORTED_TEMPLATES = ["T2A", "T2CL", "T2S"]
+MSR_SUPPORTED_TEMPLATES = ["C3", "T2", "T2A", "T2CL", "T2S"]
 
 
 @pytest.fixture(
@@ -277,12 +277,6 @@ def test_cpu_rdmsr(
 
     This comparison helps validate that defaults have not changed due to
     emulation implementation changes by host kernel patches and CPU templates.
-
-    TODO: This validates T2S, T2CL and T2A templates. Since T2 and C3 did not
-    set the ARCH_CAPABILITIES MSR, the value of that MSR is different between
-    different host CPU types (see Github PR #3066). So we can either:
-    * add an exceptions for different template types when checking values
-    * deprecate T2 and C3 since they are somewhat broken
 
     Testing matrix:
     - All supported guest kernels and rootfs
