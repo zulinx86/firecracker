@@ -48,35 +48,6 @@ def clean_and_mkdir(dir_path):
     os.makedirs(dir_path)
 
 
-def _check_cpuid_x86(test_microvm, expected_cpu_count, expected_htt):
-    expected_cpu_features = {
-        "maximum IDs for CPUs in pkg": f"{expected_cpu_count:#x} ({expected_cpu_count})",
-        "CLFLUSH line size": "0x8 (8)",
-        "hypervisor guest status": "true",
-        "hyper-threading / multi-core supported": expected_htt,
-    }
-
-    cpuid_utils.check_guest_cpuid_output(
-        test_microvm, "cpuid -1", None, "=", expected_cpu_features
-    )
-
-
-def _check_extended_cache_features(vm):
-    l3_params = cpuid_utils.get_guest_cpuid(vm, "0x80000006")[(0x80000006, 0, "edx")]
-
-    # fmt: off
-    line_size     = (l3_params >>  0) & 0xFF
-    lines_per_tag = (l3_params >>  8) & 0xF
-    assoc         = (l3_params >> 12) & 0xF
-    cache_size    = (l3_params >> 18) & 0x3FFF
-    # fmt: on
-
-    assert line_size > 0
-    assert lines_per_tag == 0x1  # This is hardcoded in the AMD spec
-    assert assoc == 0x9  # This is hardcoded in the AMD spec
-    assert cache_size > 0
-
-
 def get_cpu_template_dir(cpu_template):
     """
     Utility function to return a valid string which will be used as
@@ -125,7 +96,16 @@ def test_cpuid(uvm_plain_any, num_vcpus, htt):
     vm.basic_config(vcpu_count=num_vcpus, smt=htt)
     vm.add_net_iface()
     vm.start()
-    _check_cpuid_x86(vm, num_vcpus, "true" if num_vcpus > 1 else "false")
+
+    expected_cpu_features = {
+        "maximum IDs for CPUs in pkg": f"{num_vcpus:#x} ({num_vcpus})",
+        "CLFLUSH line size": "0x8 (8)",
+        "hypervisor guest status": "true",
+        "hyper-threading / multi-core supported": "true" if num_vcpus > 1 else "false",
+    }
+    cpuid_utils.check_guest_cpuid_output(
+        vm, "cpuid -1", None, "=", expected_cpu_features
+    )
 
 
 @pytest.mark.skipif(
@@ -142,6 +122,20 @@ def test_extended_cache_features(uvm_plain_any):
     vm.add_net_iface()
     vm.start()
     _check_extended_cache_features(vm)
+
+    l3_params = cpuid_utils.get_guest_cpuid(vm, "0x80000006")[(0x80000006, 0, "edx")]
+
+    # fmt: off
+    line_size     = (l3_params >>  0) & 0xFF
+    lines_per_tag = (l3_params >>  8) & 0xF
+    assoc         = (l3_params >> 12) & 0xF
+    cache_size    = (l3_params >> 18) & 0x3FFF
+    # fmt: on
+
+    assert line_size > 0
+    assert lines_per_tag == 0x1  # This is hardcoded in the AMD spec
+    assert assoc == 0x9  # This is hardcoded in the AMD spec
+    assert cache_size > 0
 
 
 def test_brand_string(uvm_plain_any):
