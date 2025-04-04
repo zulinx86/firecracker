@@ -200,57 +200,43 @@ def test_brand_string(uvm_plain_any):
         assert False
 
 
-# From the `Intel® 64 Architecture x2APIC Specification`
-# (https://courses.cs.washington.edu/courses/cse451/24wi/documentation/x2apic.pdf):
-# > The X2APIC MSRs cannot to be loaded and stored on VMX transitions. A VMX transition fails
-# > if the VMM has specified that the transition should access any MSRs in the address range
-# > from 0000_0800H to 0000_08FFH
-X2APIC_MSRS = [hex(i) for i in range(0x0000_0800, 0x0000_08FF + 1)]
-
-
-# Some MSR values should not be checked since they can change at guest runtime
-# and between different boots.
-# Current exceptions:
-# * FS and GS change on task switch and arch_prctl.
-# * TSC is different for each guest.
-# * MSR_{C, L}STAR used for SYSCALL/SYSRET; can be different between guests.
-# * MSR_IA32_SYSENTER_E{SP, IP} used for SYSENTER/SYSEXIT; same as above.
-# * MSR_KVM_{WALL, SYSTEM}_CLOCK addresses for struct pvclock_* can be different.
-# * MSR_IA32_TSX_CTRL is not available to read/write via KVM (known limitation).
+# Consistency of some MSR values should not be checked since they can change at
+# guest runtime or when updating guest kernels (within the same minor version)
+# or can vary between different boots.
 #
-# More detailed information about MSRs can be found in the Intel® 64 and IA-32
+# More detailed information about MSRs can be found in the Intel(R) 64 and IA-32
 # Architectures Software Developer’s Manual - Volume 4: Model-Specific Registers
-# Check `arch_gen/src/x86/msr_idex.rs` and `msr-index.h` in upstream Linux
-# for symbolic definitions.
+# For symbolic definitions, see `src/vmm/src/arch/x86_64/generated/msr_idex.rs`
+# in Firecracker source code or `arch/x86/include/asm/msr-index.h` in upstream
+# Linux source code
 # fmt: off
 MSR_EXCEPTION_LIST = [
+    # Time-related MSRs are changing over guest runtime.
     "0x10",        # MSR_IA32_TSC
     "0x11",        # MSR_KVM_WALL_CLOCK
     "0x12",        # MSR_KVM_SYSTEM_TIME
-    "0x122",       # MSR_IA32_TSX_CTRL
+    # MSR_IA32_SYSENTER_E{SP,IP} value are loaded into R{SP,IP} when a SYSENTER
+    # instruction is executed. This can change when updating guest kernels.
     "0x175",       # MSR_IA32_SYSENTER_ESP
     "0x176",       # MSR_IA32_SYSENTER_EIP
+    # MSR_IA32_TSC_DEADLINE holds a TSC-dealine value that is set by OS at
+    # runtime to get an interrupt when a certain period of time passes.
     "0x6e0",       # MSR_IA32_TSC_DEADLINE
+    # x2APIC MSR range (0x800 to 0x8ff) include several R/W MSRs
+    # "0x830",       # IA32_X2APIC_ICR MSR is x2APIC interrupt command register
+                   # to which an interrrupt command is written to send an
+                   # interruption to processors.
+    # MSR_{L,C}STAR hold the kernel entry point address when a SYSCALL
+    # instruction is executed from 64-bit mode (long mode) and compatibility
+    # mode respectively. This can change when updating guest kernels.
     "0xc0000082",  # MSR_LSTAR
     "0xc0000083",  # MSR_CSTAR
+    # FS and GS are segment registers that are used for special purposes such as
+    # Threat-Local Storage (TLS) and per-thread data storage. MSR_{F,G}S_BASE
+    # hold base addresses of {F,G}S. This value can vary between processes.
     "0xc0000100",  # MSR_FS_BASE
     "0xc0000101",  # MSR_GS_BASE
-    # MSRs below are required only on T2A, however,
-    # we are adding them to the common exception list to keep things simple
-    "0x834"     ,  # LVT Performance Monitor Interrupt Register
-    "0xc0010007",  # MSR_K7_PERFCTR3
-    "0xc001020b",  # Performance Event Counter MSR_F15H_PERF_CTR5
-    "0xc0011029",  # MSR_F10H_DECFG also referred to as MSR_AMD64_DE_CFG
-    "0x830"     ,  # IA32_X2APIC_ICR is interrupt command register and,
-                   # bit 0-7 represent interrupt vector that varies.
-    "0x83f"     ,  # IA32_X2APIC_SELF_IPI
-                   # A self IPI is semantically identical to an
-                   # inter-processor interrupt sent via the ICR,
-                   # with a Destination Shorthand of Self,
-                   # Trigger Mode equal to Edge,
-                   # and a Delivery Mode equal to Fixed.
-                   # bit 0-7 represent interrupt vector that varies.
-] + X2APIC_MSRS
+]
 # fmt: on
 
 
