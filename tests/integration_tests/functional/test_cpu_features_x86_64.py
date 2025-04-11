@@ -259,45 +259,22 @@ def test_cpu_rdmsr(
     microvm_factory, cpu_template_any, guest_kernel, rootfs, results_dir
 ):
     """
-    Test MSRs that are available to the guest.
+    Test that MSR values captured within a guest have not changed since the
+    last time the baselines were taken.
 
-    This test boots a uVM and tries to read a set of MSRs from the guest.
-    The guest MSR list is compared against a list of MSRs that are expected
-    when running on a particular combination of host CPU model, host kernel,
-    guest kernel and CPU template.
-
-    The list is dependent on:
-    * host CPU model, since some MSRs are passed through from the host in some
-      CPU templates
+    The list of available MSRs and those values are dependent on:
+    * host CPU model, since some MSRs are passed through from the host
     * host kernel version, since firecracker relies on MSR emulation provided
       by KVM
     * guest kernel version, since some MSRs are writable from guest uVMs and
       different guest kernels might set different values
     * CPU template, since enabled CPUIDs are different between CPU templates
       and some MSRs are not available if CPUID features are disabled
-
-    This comparison helps validate that defaults have not changed due to
-    emulation implementation changes by host kernel patches and CPU templates.
-
-    TODO: This validates T2S, T2CL and T2A templates. Since T2 and C3 did not
-    set the ARCH_CAPABILITIES MSR, the value of that MSR is different between
-    different host CPU types (see Github PR #3066). So we can either:
-    * add an exceptions for different template types when checking values
-    * deprecate T2 and C3 since they are somewhat broken
-
-    Testing matrix:
-    - All supported guest kernels and rootfs
-    - Microvm: 1vCPU with 1024 MB RAM
     """
-    cpu_template_name = get_cpu_template_name(cpu_template_any)
-    if cpu_template_name not in MSR_SUPPORTED_TEMPLATES:
-        pytest.skip(f"This test does not support {cpu_template_name} template.")
-
-    vcpus, guest_mem_mib = 1, 1024
     vm = microvm_factory.build(guest_kernel, rootfs, monitor_memory=False)
     vm.spawn()
     vm.add_net_iface()
-    vm.basic_config(vcpu_count=vcpus, mem_size_mib=guest_mem_mib)
+    vm.basic_config(vcpu_count=1)
     vm.set_cpu_template(cpu_template_any)
     vm.start()
     vm.ssh.scp_put(DATA_FILES / "msr_reader.sh", "/tmp/msr_reader.sh")
@@ -311,6 +288,7 @@ def test_cpu_rdmsr(
     host_cpu = global_props.cpu_codename
     host_kv = global_props.host_linux_version
     guest_kv = re.search(r"vmlinux-(\d+\.\d+)", guest_kernel.name).group(1)
+    cpu_template_name = get_cpu_template_name(cpu_template_any)
     baseline_file_name = (
         f"msr_list_{cpu_template_name}_{host_cpu}_{host_kv}host_{guest_kv}guest.csv"
     )
