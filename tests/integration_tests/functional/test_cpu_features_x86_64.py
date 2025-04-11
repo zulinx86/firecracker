@@ -289,10 +289,6 @@ def test_cpu_rdmsr(
     - All supported guest kernels and rootfs
     - Microvm: 1vCPU with 1024 MB RAM
     """
-    cpu_template_name = get_cpu_template_name(cpu_template_any)
-    if cpu_template_name not in MSR_SUPPORTED_TEMPLATES:
-        pytest.skip(f"This test does not support {cpu_template_name} template.")
-
     vcpus, guest_mem_mib = 1, 1024
     vm = microvm_factory.build(guest_kernel, rootfs, monitor_memory=False)
     vm.spawn()
@@ -311,6 +307,7 @@ def test_cpu_rdmsr(
     host_cpu = global_props.cpu_codename
     host_kv = global_props.host_linux_version
     guest_kv = re.search(r"vmlinux-(\d+\.\d+)", guest_kernel.name).group(1)
+    cpu_template_name = get_cpu_template_name(cpu_template_any)
     baseline_file_name = (
         f"msr_list_{cpu_template_name}_{host_cpu}_{host_kv}host_{guest_kv}guest.csv"
     )
