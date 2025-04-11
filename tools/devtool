@@ -637,7 +637,7 @@ apply_performance_tweaks() {
   if [[ -d /sys/devices/system/cpu/intel_pstate ]]; then
     # Disable turbo boost. Some of our tests are performance tests, and we want minimum variability wrt processor frequency
     # See also https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/processor_state_control.html
-    echo 1 |sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo &> /dev/null
+    # echo 1 |sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo &> /dev/null
 
     # Save old values to restore later
     MIN_PERF_PCT=$(cat /sys/devices/system/cpu/intel_pstate/min_perf_pct)
@@ -648,8 +648,8 @@ apply_performance_tweaks() {
     # https://www.kernel.org/doc/html/v4.12/admin-guide/pm/intel_pstate.html
     echo 100 |sudo tee /sys/devices/system/cpu/intel_pstate/min_perf_pct &> /dev/null
     echo 100 |sudo tee /sys/devices/system/cpu/intel_pstate/max_perf_pct &> /dev/null
-  elif [[ -f /sys/devices/system/cpu/cpufreq/boost ]]; then
-    echo 0 |sudo tee /sys/devices/system/cpu/cpufreq/boost &> /dev/null
+  # elif [[ -f /sys/devices/system/cpu/cpufreq/boost ]]; then
+  #   echo 0 |sudo tee /sys/devices/system/cpu/cpufreq/boost &> /dev/null
   fi
 
   # The governor is a linux component that can adjust CPU frequency. "performance" tells it to always run CPUs at
