@@ -102,7 +102,7 @@ def test_vsock_throughput(
         }
     )
 
-    vm.pin_threads(0)
+    vm.pin_threads(4)
 
     test = VsockIPerf3Test(vm, mode, payload_length)
     data = test.run_test(vm.vcpus_count + 2)

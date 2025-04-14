@@ -48,7 +48,7 @@ def network_microvm(request, microvm_factory, guest_kernel_acpi, rootfs):
     vm.basic_config(vcpu_count=guest_vcpus, mem_size_mib=guest_mem_mib)
     vm.add_net_iface()
     vm.start()
-    vm.pin_threads(0)
+    vm.pin_threads(4)
 
     return vm
 

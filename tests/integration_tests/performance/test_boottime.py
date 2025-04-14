@@ -101,7 +101,7 @@ def test_boottime(
         )
         vm.add_net_iface()
         vm.start()
-        vm.pin_threads(0)
+        vm.pin_threads(4)
         boottime_us = _get_microvm_boottime(vm)
         metrics.put_metric("boot_time", boottime_us, unit="Microseconds")
         timestamps = find_events(vm.log_data)

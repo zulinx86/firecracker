@@ -174,7 +174,7 @@ def test_block_performance(
         }
     )
 
-    vm.pin_threads(0)
+    vm.pin_threads(4)
 
     logs_dir, cpu_util = run_fio(vm, fio_mode, fio_block_size)
 
@@ -222,7 +222,7 @@ def test_block_vhost_user_performance(
         }
     )
 
-    next_cpu = vm.pin_threads(0)
+    next_cpu = vm.pin_threads(4)
     vm.disks_vhost_user["scratch"].pin(next_cpu)
 
     logs_dir, cpu_util = run_fio(vm, fio_mode, fio_block_size)

@@ -31,7 +31,7 @@ def test_snapshot_create_latency(
     vm.spawn()
     vm.basic_config(vcpu_count=2, mem_size_mib=512)
     vm.start()
-    vm.pin_threads(0)
+    vm.pin_threads(4)
 
     metrics.set_dimensions(
         {**vm.dimensions, "performance_test": "test_snapshot_create_latency"}
