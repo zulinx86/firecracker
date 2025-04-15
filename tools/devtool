@@ -672,6 +672,10 @@ unapply_performance_tweaks() {
 
   # We do not reset the governor, as keeping track of each CPUs configured governor is not trivial here. On our CI
   # instances, the performance governor is current the default anyway (2023/11/14)
+
+  if [ -f /etc/sysconfig/irqbalance.bak ]; then
+    sudo mv /etc/sysconfig/irqbalance.bak /etc/sysconfig/irqbalance
+  fi
 }
 
 
@@ -750,6 +754,11 @@ cmd_test() {
 
       huge_pages_old=$(cat /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)
       huge_pages_new=$(echo $num_hugetlbfs_pages |sudo tee /sys/kernel/mm/hugepages/hugepages-2048kB/nr_hugepages)
+
+      if [ -n "$cpuset_cpus" ] && [ -f "/etc/sysconfig/irqbalance" ]; then
+        sudo cp /etc/sysconfig/irqbalance /etc/sysconfig/irqbalance.bak
+        echo "IRQBALANCE_BANNED_CPULIST=\"$cpuset_cpus\"" | sudo tee -a /etc/sys/config/irqbalance
+      fi
     fi
 
     if [[ "$huge_pages_new" -ne "$num_hugetlbfs_pages" ]]; then
