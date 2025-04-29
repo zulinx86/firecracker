@@ -53,7 +53,7 @@ perf_test = {
     "vsock-throughput": {
         "label": "🧦 Vsock Throughput",
         "tests": "integration_tests/performance/test_vsock_ab.py",
-        "devtool_opts": "-c 1-10 -m 0",
+        "devtool_opts": "-c 1-20 -m 0",
     },
     "memory-overhead": {
         "label": "💾 Memory Overhead and 👢 Boottime",
