@@ -69,7 +69,7 @@ class VsockIPerf3Test(IPerf3Test):
 
 @pytest.mark.timeout(120)
 @pytest.mark.nonci
-@pytest.mark.parametrize("vcpus", [1, 2], ids=["1vcpu", "2vcpu"])
+@pytest.mark.parametrize("vcpus", [1, 2, 4, 8], ids=["1vcpu", "2vcpu", "4vcpu", "8vcpu"])
 @pytest.mark.parametrize("payload_length", ["64K", "1024K"], ids=["p64K", "p1024K"])
 @pytest.mark.parametrize("mode", ["g2h", "h2g", "bd"])
 def test_vsock_throughput(
