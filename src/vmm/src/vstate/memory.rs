@@ -323,6 +323,12 @@ where
 
     /// Store the dirty bitmap in internal store
     fn store_dirty_bitmap(&self, dirty_bitmap: &DirtyBitmap, page_size: usize);
+
+    /// Convert GPA to file offset
+    fn gpa_to_offset(&self, gpa: GuestAddress) -> Option<u64>;
+
+    /// Convert file offset to GPA
+    fn offset_to_gpa(&self, offset: u64) -> Option<GuestAddress>;
 }
 
 /// State of a guest memory region saved to file/buffer.
@@ -472,6 +478,40 @@ impl GuestMemoryExtension for GuestMemoryMmap {
                 }
             }
         });
+    }
+
+    /// Convert GPA to file offset
+    fn gpa_to_offset(&self, gpa: GuestAddress) -> Option<u64> {
+        self.iter().find_map(|region| {
+            if region.start_addr() <= gpa && gpa <= region.last_addr() {
+                region
+                    .file_offset()
+                    .map(|reg_offset| gpa.0 - reg_offset.start())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Convert file offset to GPA (Guest Physical Address)
+    fn offset_to_gpa(&self, offset: u64) -> Option<GuestAddress> {
+        self.iter().find_map(|region| {
+            if let Some(reg_offset) = region.file_offset() {
+                let region_start = reg_offset.start();
+                let region_size = region.size();
+
+                // Check if offset falls within the region's range
+                if offset >= region_start && offset < region_start + region_size as u64 {
+                    Some(GuestAddress(
+                        region.start_addr().0 + (offset - region_start),
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
     }
 }
 

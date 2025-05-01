@@ -3,4 +3,5 @@
 
 pub mod arg_parser;
 pub mod time;
+pub mod userfault_bitmap;
 pub mod validators;

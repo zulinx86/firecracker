@@ -115,23 +115,30 @@ pub mod vstate;
 pub mod initrd;
 
 use std::collections::HashMap;
-use std::io;
+use std::io::{self, Read, Write};
+use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
+use ::utils::userfault_bitmap::UserfaultBitmap;
 use device_manager::acpi::ACPIDeviceManager;
 use device_manager::resources::ResourceAllocator;
 use devices::acpi::vmgenid::VmGenIdError;
 use event_manager::{EventManager as BaseEventManager, EventOps, Events, MutEventSubscriber};
+use persist::FaultReply;
 use seccomp::BpfProgram;
 use userfaultfd::Uffd;
+use vm_memory::GuestAddress;
 use vmm_sys_util::epoll::EventSet;
 use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::terminal::Terminal;
 use vstate::kvm::Kvm;
+use vstate::memory::GuestMemoryExtension;
 use vstate::vcpu::{self, StartThreadedError, VcpuSendEventError};
+use vstate::vm::{UserfaultChannel, UserfaultData};
 
 use crate::arch::DeviceType;
 use crate::cpu_config::templates::CpuConfiguration;
@@ -146,7 +153,7 @@ use crate::devices::virtio::block::device::Block;
 use crate::devices::virtio::net::Net;
 use crate::devices::virtio::{TYPE_BALLOON, TYPE_BLOCK, TYPE_NET};
 use crate::logger::{METRICS, MetricsError, error, info, warn};
-use crate::persist::{MicrovmState, MicrovmStateError, VmInfo};
+use crate::persist::{FaultRequest, MicrovmState, MicrovmStateError, VmInfo};
 use crate::rate_limiter::BucketUpdate;
 use crate::snapshot::Persist;
 use crate::vmm_config::instance_info::{InstanceInfo, VmState};
@@ -310,6 +317,12 @@ pub struct Vmm {
     pub vm: Vm,
     // Save UFFD in order to keep it open in the Firecracker process, as well.
     uffd: Option<Uffd>,
+    // Used for userfault communication with the UFFD handler when secret freedom is enabled
+    uffd_socket: Option<UnixStream>,
+    // Used for userfault communication with KVM when secret freedom is enabled
+    userfault_bitmap: Option<UserfaultBitmap>,
+    // Used for userfault communication with vCPUs when secret freedom is enabled
+    userfault_channels: Option<Vec<UserfaultChannel>>,
     vcpus_handles: Vec<VcpuHandle>,
     // Used by Vcpus and devices to initiate teardown; Vmm should never write here.
     vcpus_exit_evt: EventFd,
@@ -797,6 +810,78 @@ impl Vmm {
         self.shutdown_exit_code = Some(exit_code);
     }
 
+    fn process_userfault_events(&self, source: &RawFd, event_set: &EventSet) -> bool {
+        // TODO: write better
+        let userfault_channels = self
+            .userfault_channels
+            .as_ref()
+            .expect("userfault_channels are not set");
+        for cpu_idx in 0..userfault_channels.len() {
+            let mut receiver = &userfault_channels[cpu_idx].receiver;
+            if *source == receiver.as_raw_fd() && *event_set == EventSet::IN {
+                // println!("Reading...");
+                // TODO unwrap
+                let size = bincode::encode_to_vec(
+                    &UserfaultData::default(),
+                    bincode::config::standard().with_fixed_int_encoding(),
+                )
+                .unwrap()
+                .len();
+                let mut req = vec![0u8; size as usize];
+
+                // println!("recv: size of req {}", size);
+                loop {
+                    match receiver.read_exact(&mut req) {
+                        Ok(()) => {
+                            let request = bincode::decode_from_slice::<UserfaultData, _>(
+                                &req,
+                                bincode::config::standard().with_fixed_int_encoding(),
+                            )
+                            .unwrap()
+                            .0;
+
+                            // println!("received request {:?}", request);
+
+                            let offset = self
+                                .vm
+                                .guest_memory()
+                                .gpa_to_offset(GuestAddress(request.gpa))
+                                .unwrap();
+
+                            let fault_request = FaultRequest {
+                                vcpu: cpu_idx as _,
+                                offset,
+                                flags: request.flags,
+                                token: None,
+                            };
+                            let fault_request_json = serde_json::to_string(&fault_request).unwrap();
+                            // println!("Sending FaultRequest: {:?}", fault_request);
+                            self.uffd_socket
+                                .as_ref()
+                                .unwrap()
+                                .write(fault_request_json.as_bytes())
+                                .unwrap();
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            break;
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            break;
+                        }
+                        Err(e) => {
+                            // Error occurred while reading from the stream
+                            eprintln!("Error reading from stream: {}", e);
+                            break;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+        // source == self.reader.as_raw_fd() && event_set == EventSet::IN {
+        false
+    }
+
     /// Gets a reference to kvm-ioctls Vm
     #[cfg(feature = "gdb")]
     pub fn vm(&self) -> &Vm {
@@ -903,6 +988,102 @@ impl MutEventSubscriber for Vmm {
                 FcExitCode::Ok
             };
             self.stop(exit_code);
+        } else if source == self.uffd_socket.as_ref().unwrap().as_raw_fd()
+            && event_set == EventSet::IN
+        {
+            const BUFFER_SIZE: usize = 4096;
+
+            let stream = self.uffd_socket.as_mut().unwrap();
+
+            let mut buffer = [0u8; BUFFER_SIZE];
+            let mut current_pos = 0;
+
+            loop {
+                // Read more data into the buffer if there's space
+                if current_pos < BUFFER_SIZE {
+                    match stream.read(&mut buffer[current_pos..]) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => current_pos += n,
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                        Err(e) => panic!("Read error: {}", e),
+                    }
+                }
+
+                let mut parser = serde_json::Deserializer::from_slice(&buffer[..current_pos])
+                    .into_iter::<FaultReply>();
+                let mut total_consumed = 0;
+                let mut needs_more = false;
+
+                while let Some(result) = parser.next() {
+                    match result {
+                        Ok(fault_reply) => {
+                            // println!("Received FaultReply: {:?}", fault_reply);
+
+                            let bitmap = self.userfault_bitmap.as_mut().unwrap();
+                            let base: usize = (fault_reply.offset / 4096).try_into().unwrap();
+                            let len: usize = (fault_reply.len / 4096).try_into().unwrap();
+
+                            bitmap.clear_bits(base, len);
+
+                            let gpa = self
+                                .vm
+                                .common
+                                .guest_memory
+                                .offset_to_gpa(fault_reply.offset)
+                                .unwrap();
+
+                            let userfaultfd_data = UserfaultData {
+                                flags: fault_reply.flags,
+                                gpa: gpa.0,
+                                size: fault_reply.len,
+                            };
+
+                            use bincode::config::standard;
+                            let repl = bincode::encode_to_vec(
+                                userfaultfd_data,
+                                standard().with_fixed_int_encoding(),
+                            )
+                            .unwrap();
+
+                            if let Some(vcpu) = fault_reply.vcpu {
+                                let userfault_channels = self
+                                    .userfault_channels
+                                    .as_ref()
+                                    .expect("userfault_channels are not set");
+                                let mut sender = &userfault_channels[vcpu as usize].sender;
+                                sender.write_all(&repl).unwrap();
+                            }
+
+                            total_consumed = parser.byte_offset();
+                        }
+                        Err(e) if e.is_eof() => {
+                            needs_more = true;
+                            break;
+                        }
+                        Err(e) => {
+                            println!(
+                                "Buffer content: {:?}",
+                                std::str::from_utf8(&buffer[..current_pos])
+                            );
+                            panic!("Invalid JSON: {}", e);
+                        }
+                    }
+                }
+
+                if total_consumed > 0 {
+                    buffer.copy_within(total_consumed..current_pos, 0);
+                    current_pos -= total_consumed;
+                }
+
+                if needs_more {
+                    continue;
+                }
+
+                if current_pos == 0 {
+                    break;
+                }
+            }
+        } else if self.process_userfault_events(&source, &event_set) {
         } else {
             error!("Spurious EventManager event for handler: Vmm");
         }
@@ -911,6 +1092,23 @@ impl MutEventSubscriber for Vmm {
     fn init(&mut self, ops: &mut EventOps) {
         if let Err(err) = ops.add(Events::new(&self.vcpus_exit_evt, EventSet::IN)) {
             error!("Failed to register vmm exit event: {}", err);
+        }
+
+        if let Some(uffd_socket) = self.uffd_socket.as_ref() {
+            if let Err(err) = ops.add(Events::new(uffd_socket, EventSet::IN)) {
+                error!("Failed to register UFFD socket: {}", err);
+            }
+
+            if let Some(userfault_channels) = self.userfault_channels.as_ref() {
+                for cpu_idx in 0..userfault_channels.len() {
+                    if let Err(err) = ops.add(Events::new(
+                        &userfault_channels[cpu_idx].receiver,
+                        EventSet::IN,
+                    )) {
+                        error!("Failed to register userfault events: {}", err);
+                    }
+                }
+            }
         }
     }
 }

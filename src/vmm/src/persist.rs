@@ -7,6 +7,7 @@ use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::mem::forget;
+use std::os::fd::RawFd;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -34,10 +35,9 @@ use crate::utils::u64_to_usize;
 use crate::vmm_config::boot_source::BootSourceConfig;
 use crate::vmm_config::instance_info::InstanceInfo;
 use crate::vmm_config::machine_config::{HugePageConfig, MachineConfigError, MachineConfigUpdate};
-use crate::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams, MemBackendType};
+use crate::vmm_config::snapshot::{CreateSnapshotParams, LoadSnapshotParams};
 use crate::vstate::kvm::KvmState;
-use crate::vstate::memory;
-use crate::vstate::memory::{GuestMemoryState, GuestRegionMmap, MemoryError};
+use crate::vstate::memory::{self, GuestMemoryState, GuestRegionMmap, MemoryError};
 use crate::vstate::vcpu::{VcpuSendEventError, VcpuState};
 use crate::vstate::vm::VmState;
 use crate::{EventManager, Vmm, vstate};
@@ -113,6 +113,54 @@ pub struct GuestRegionUffdMapping {
     /// to be removed in 2.0.
     #[deprecated]
     pub page_size_kib: usize,
+}
+
+/// FaultRequest
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FaultRequest {
+    /// vCPU that encountered the fault (not meaningful to Fission)
+    pub vcpu: u32,
+    /// Offset in guest_memfd where the fault occured
+    pub offset: u64,
+    /// Flags (not meaningful to Fission)
+    pub flags: u64,
+    /// Async PF token (not meaningful to Fission)
+    pub token: Option<u32>,
+}
+
+/// FaultReply
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FaultReply {
+    /// vCPU that encountered the fault, from `FaultRequest` (if present, otherwise 0)
+    pub vcpu: Option<u32>,
+    /// Offset in guest_memfd where population started
+    pub offset: u64,
+    /// Length of populated area
+    pub len: u64,
+    /// Flags, must be copied from `FaultRequest`, otherwise 0
+    pub flags: u64,
+    /// Async PF token, must be copied from `FaultRequest`, otherwise None
+    pub token: Option<u32>,
+    /// Whether the populated pages are zero pages
+    pub zero: bool,
+}
+
+/// UffdMsgFromFirecracker
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum UffdMsgFromFirecracker {
+    /// Mappings
+    Mappings(Vec<GuestRegionUffdMapping>),
+    /// FaultReq
+    FaultReq(FaultRequest),
+}
+
+/// UffdMsgToFirecracker
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum UffdMsgToFirecracker {
+    /// FaultRep
+    FaultRep(FaultReply),
 }
 
 /// Errors related to saving and restoring Microvm state.
@@ -312,19 +360,8 @@ pub enum RestoreFromSnapshotError {
     File(#[from] SnapshotStateFromFileError),
     /// Invalid snapshot state: {0}
     Invalid(#[from] SnapShotStateSanityCheckError),
-    /// Failed to load guest memory: {0}
-    GuestMemory(#[from] RestoreFromSnapshotGuestMemoryError),
     /// Failed to build microVM from snapshot: {0}
     Build(#[from] BuildMicrovmFromSnapshotError),
-}
-/// Sub-Error type for [`restore_from_snapshot`] to contain either [`GuestMemoryFromFileError`] or
-/// [`GuestMemoryFromUffdError`] within [`RestoreFromSnapshotError`].
-#[derive(Debug, thiserror::Error, displaydoc::Display)]
-pub enum RestoreFromSnapshotGuestMemoryError {
-    /// Error creating guest memory from file: {0}
-    File(#[from] GuestMemoryFromFileError),
-    /// Error creating guest memory from uffd: {0}
-    Uffd(#[from] GuestMemoryFromUffdError),
 }
 
 /// Loads a Microvm snapshot producing a 'paused' Microvm.
@@ -376,38 +413,12 @@ pub fn restore_from_snapshot(
     // Some sanity checks before building the microvm.
     snapshot_state_sanity_check(&microvm_state)?;
 
-    let mem_backend_path = &params.mem_backend.backend_path;
-    let mem_state = &microvm_state.vm_state.memory;
-
-    let (guest_memory, uffd) = match params.mem_backend.backend_type {
-        MemBackendType::File => {
-            if vm_resources.machine_config.huge_pages.is_hugetlbfs() {
-                return Err(RestoreFromSnapshotGuestMemoryError::File(
-                    GuestMemoryFromFileError::HugetlbfsSnapshot,
-                )
-                .into());
-            }
-            (
-                guest_memory_from_file(mem_backend_path, mem_state, track_dirty_pages)
-                    .map_err(RestoreFromSnapshotGuestMemoryError::File)?,
-                None,
-            )
-        }
-        MemBackendType::Uffd => guest_memory_from_uffd(
-            mem_backend_path,
-            mem_state,
-            track_dirty_pages,
-            vm_resources.machine_config.huge_pages,
-        )
-        .map_err(RestoreFromSnapshotGuestMemoryError::Uffd)?,
-    };
     builder::build_microvm_from_snapshot(
         instance_info,
         event_manager,
         microvm_state,
-        guest_memory,
-        uffd,
         seccomp_filters,
+        params,
         vm_resources,
     )
     .map_err(RestoreFromSnapshotError::Build)
@@ -451,7 +462,8 @@ pub enum GuestMemoryFromFileError {
     HugetlbfsSnapshot,
 }
 
-fn guest_memory_from_file(
+/// Create guest memory from a file.
+pub fn guest_memory_from_file(
     mem_file_path: &Path,
     mem_state: &GuestMemoryState,
     track_dirty_pages: bool,
@@ -476,14 +488,63 @@ pub enum GuestMemoryFromUffdError {
     Send(#[from] vmm_sys_util::errno::Error),
 }
 
-fn guest_memory_from_uffd(
+const UFFDIO_REGISTER_MODE_MINOR: u64 = 1 << 2;
+const UFFDIO_REGISTER: u64 = 0xc020aa00;
+
+use std::ffi::c_void;
+
+use libc::ioctl;
+#[repr(C)]
+struct UffdRegister {
+    range: UffdRange,
+    mode: u64,
+    ioctls: u64,
+}
+
+#[repr(C)]
+struct UffdRange {
+    start: u64,
+    len: u64,
+}
+
+fn guest_memory_uffd_register_minor(guest_memory: &[GuestRegionMmap], uffd: &Uffd) {
+    for mem_region in guest_memory.iter() {
+        let uffd_register = UffdRegister {
+            range: UffdRange {
+                start: mem_region.as_ptr() as u64,
+                len: mem_region.size() as u64,
+            },
+            mode: UFFDIO_REGISTER_MODE_MINOR,
+            ioctls: 0,
+        };
+
+        // FIXME: this functions will be replaced with the one from the userfaultfd crate.
+        // SAFETY: temporary
+        let result = unsafe {
+            ioctl(
+                uffd.as_raw_fd(),
+                UFFDIO_REGISTER as _,
+                &uffd_register as *const _ as *const c_void,
+            )
+        };
+
+        if result == -1 {
+            panic!("{}", io::Error::last_os_error());
+        }
+    }
+}
+
+/// Create guest memory for a VM to be restored via UFFD.
+pub fn guest_memory_from_uffd(
     mem_uds_path: &Path,
     mem_state: &GuestMemoryState,
     track_dirty_pages: bool,
     huge_pages: HugePageConfig,
-) -> Result<(Vec<GuestRegionMmap>, Option<Uffd>), GuestMemoryFromUffdError> {
+    guest_memfd: Option<File>,
+) -> Result<(Vec<GuestRegionMmap>, Option<Uffd>, Option<UnixStream>), GuestMemoryFromUffdError> {
+    let guest_memfd_copy = guest_memfd.as_ref().map(|f| f.try_clone()).transpose()?;
     let (guest_memory, backend_mappings) =
-        create_guest_memory(mem_state, track_dirty_pages, huge_pages)?;
+        create_guest_memory(mem_state, track_dirty_pages, huge_pages, guest_memfd)?;
 
     let mut uffd_builder = UffdBuilder::new();
 
@@ -500,22 +561,42 @@ fn guest_memory_from_uffd(
         .create()
         .map_err(GuestMemoryFromUffdError::Create)?;
 
-    for mem_region in guest_memory.iter() {
-        uffd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
-            .map_err(GuestMemoryFromUffdError::Register)?;
-    }
+    let fds = match guest_memfd_copy {
+        Some(ref guest_memfd) => {
+            guest_memory_uffd_register_minor(&guest_memory, &uffd);
+            vec![uffd.as_raw_fd(), guest_memfd.as_raw_fd()]
+        }
+        None => {
+            for mem_region in guest_memory.iter() {
+                uffd.register(mem_region.as_ptr().cast(), mem_region.size() as _)
+                    .map_err(GuestMemoryFromUffdError::Register)?;
+            }
+            vec![uffd.as_raw_fd()]
+        }
+    };
 
-    send_uffd_handshake(mem_uds_path, &backend_mappings, &uffd)?;
+    // We prevent Rust from closing the guest_memfd file descriptor
+    // so the UFFD handler can used it to populate guest memory.
+    forget(guest_memfd_copy);
 
-    Ok((guest_memory, Some(uffd)))
+    let socket = send_uffd_handshake(mem_uds_path, &backend_mappings, fds)?;
+
+    Ok((guest_memory, Some(uffd), Some(socket)))
 }
 
 fn create_guest_memory(
     mem_state: &GuestMemoryState,
     track_dirty_pages: bool,
     huge_pages: HugePageConfig,
+    guest_memfd: Option<File>,
 ) -> Result<(Vec<GuestRegionMmap>, Vec<GuestRegionUffdMapping>), GuestMemoryFromUffdError> {
-    let guest_memory = memory::anonymous(mem_state.regions(), track_dirty_pages, huge_pages)?;
+    let guest_memory = match guest_memfd {
+        Some(file) => {
+            memory::file_shared(file, mem_state.regions(), track_dirty_pages, huge_pages)?
+        }
+        None => memory::anonymous(mem_state.regions(), track_dirty_pages, huge_pages)?,
+    };
+
     let mut backend_mappings = Vec::with_capacity(guest_memory.len());
     let mut offset = 0;
     for mem_region in guest_memory.iter() {
@@ -536,15 +617,15 @@ fn create_guest_memory(
 fn send_uffd_handshake(
     mem_uds_path: &Path,
     backend_mappings: &[GuestRegionUffdMapping],
-    uffd: &impl AsRawFd,
-) -> Result<(), GuestMemoryFromUffdError> {
+    fds: Vec<RawFd>,
+) -> Result<UnixStream, GuestMemoryFromUffdError> {
     // This is safe to unwrap() because we control the contents of the vector
     // (i.e GuestRegionUffdMapping entries).
     let backend_mappings = serde_json::to_string(backend_mappings).unwrap();
 
     let socket = UnixStream::connect(mem_uds_path)?;
-    socket.send_with_fd(
-        backend_mappings.as_bytes(),
+    socket.send_with_fds(
+        &[backend_mappings.as_bytes()],
         // In the happy case we can close the fd since the other process has it open and is
         // using it to serve us pages.
         //
@@ -575,15 +656,15 @@ fn send_uffd_handshake(
         // Moreover, Firecracker holds a copy of the UFFD fd as well, so that even if the
         // page fault handler process does not tear down Firecracker when necessary, the
         // uffd will still be alive but with no one to serve faults, leading to guest freeze.
-        uffd.as_raw_fd(),
+        &fds,
     )?;
 
     // We prevent Rust from closing the socket file descriptor to avoid a potential race condition
     // between the mappings message and the connection shutdown. If the latter arrives at the UFFD
     // handler first, the handler never sees the mappings.
-    forget(socket);
+    // forget(socket);
 
-    Ok(())
+    Ok(socket)
 }
 
 #[cfg(test)]
@@ -714,7 +795,7 @@ mod tests {
         };
 
         let (_, uffd_regions) =
-            create_guest_memory(&mem_state, false, HugePageConfig::None).unwrap();
+            create_guest_memory(&mem_state, false, HugePageConfig::None, None).unwrap();
 
         assert_eq!(uffd_regions.len(), 1);
         assert_eq!(uffd_regions[0].size, 0x20000);
@@ -748,7 +829,7 @@ mod tests {
 
         let listener = UnixListener::bind(uds_path).expect("Cannot bind to socket path");
 
-        send_uffd_handshake(uds_path, &uffd_regions, &std::io::stdin()).unwrap();
+        send_uffd_handshake(uds_path, &uffd_regions, vec![std::io::stdin().as_raw_fd()]).unwrap();
 
         let (stream, _) = listener.accept().expect("Cannot listen on UDS socket");
 
