@@ -418,10 +418,12 @@ impl UffdHandler {
                 std::ptr::copy_nonoverlapping(src as *const u8, dst_memcpy as *mut u8, len as _);
             }
             self.bitmap.set((offset / 4096) as usize, true);
+
         }
 
-        uffd_continue(self.uffd.as_raw_fd(), dst as _, len.try_into().unwrap())
-            .expect("Uffd continue failed");
+        if let Err(err) = uffd_continue(self.uffd.as_raw_fd(), dst as _, len.try_into().unwrap()) {
+            eprintln!("uffdio_continue error: {:?}", err)
+        }
 
         true
     }

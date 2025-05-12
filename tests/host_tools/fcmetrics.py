@@ -473,6 +473,7 @@ def flush_fc_metrics_to_cw(fc_metrics, metrics):
         "fc_metrics.vsock.rx_read_fails",
         "fc_metrics.vsock.tx_write_fails",
         "fc_metrics.vsock.tx_flush_fails",
+        "fc_metrics.vcpu.kvmclock_ctrl_fails",
     ]
 
     failure_metrics = {

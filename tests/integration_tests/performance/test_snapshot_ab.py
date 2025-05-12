@@ -46,7 +46,7 @@ class SnapshotRestoreTest:
         """Computes a unique id for this test instance"""
         return "all_dev" if self.all_devices else f"{self.vcpus}vcpu_{self.mem}mb"
 
-    def boot_vm(self, microvm_factory, guest_kernel, rootfs) -> Microvm:
+    def boot_vm(self, microvm_factory, guest_kernel, rootfs, secret_free) -> Microvm:
         """Creates the initial snapshot that will be loaded repeatedly to sample latencies"""
         vm = microvm_factory.build(
             guest_kernel,
@@ -60,6 +60,7 @@ class SnapshotRestoreTest:
             mem_size_mib=self.mem,
             rootfs_io_engine="Sync",
             huge_pages=self.huge_pages,
+            secret_free=secret_free,
         )
 
         for _ in range(self.nets):
@@ -107,16 +108,7 @@ def test_restore_latency(
 
     We only test a single guest kernel, as the guest kernel does not "participate" in snapshot restore.
     """
-    if (
-        test_setup.huge_pages != HugePagesConfig.NONE
-        and global_props.host_linux_version_tpl > (6, 1)
-        and global_props.cpu_architecture == "aarch64"
-    ):
-        pytest.skip(
-            "huge pages with secret hiding kernels on ARM are currently failing"
-        )
-
-    vm = test_setup.boot_vm(microvm_factory, guest_kernel_linux_5_10, rootfs)
+    vm = test_setup.boot_vm(microvm_factory, guest_kernel_linux_5_10, rootfs, False)
 
     metrics.set_dimensions(
         {
@@ -159,6 +151,7 @@ def test_post_restore_latency(
     metrics,
     uffd_handler,
     huge_pages,
+    secret_free,
 ):
     """Collects latency metric of post-restore memory accesses done inside the guest"""
     if huge_pages != HugePagesConfig.NONE and uffd_handler is None:
@@ -173,8 +166,17 @@ def test_post_restore_latency(
             "huge pages with secret hiding kernels on ARM are currently failing"
         )
 
+    if secret_free and uffd_handler is None:
+        pytest.skip("secret free restoration only supported with UFFD")
+
+    if secret_free and huge_pages != HugePagesConfig.NONE:
+        pytest.skip("huge pages and guest_memfd not supported together")
+
     test_setup = SnapshotRestoreTest(mem=1024, vcpus=2, huge_pages=huge_pages)
-    vm = test_setup.boot_vm(microvm_factory, guest_kernel_linux_5_10, rootfs)
+    vm = test_setup.boot_vm(
+        microvm_factory, guest_kernel_linux_5_10, rootfs, secret_free
+    )
+    vm.jailer.extra_args.update({"no-seccomp": None})
 
     metrics.set_dimensions(
         {
@@ -226,6 +228,7 @@ def test_population_latency(
     huge_pages,
     vcpus,
     mem,
+    secret_free,
 ):
     """Collects population latency metrics (e.g. how long it takes UFFD handler to fault in all memory)"""
     if (
@@ -237,8 +240,11 @@ def test_population_latency(
             "huge pages with secret hiding kernels on ARM are currently failing"
         )
 
+    if secret_free and huge_pages != HugePagesConfig.NONE:
+        pytest.skip("huge pages and guest_memfd not supported together")
+
     test_setup = SnapshotRestoreTest(mem=mem, vcpus=vcpus, huge_pages=huge_pages)
-    vm = test_setup.boot_vm(microvm_factory, guest_kernel_linux_5_10, rootfs)
+    vm = test_setup.boot_vm(microvm_factory, guest_kernel_linux_5_10, rootfs, secret_free)
 
     metrics.set_dimensions(
         {
