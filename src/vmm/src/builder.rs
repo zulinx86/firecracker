@@ -504,7 +504,9 @@ pub fn build_microvm_from_snapshot(
     let secret_free = vm_resources.machine_config.secret_free;
 
     let mut kvm_capabilities = microvm_state.kvm_state.kvm_cap_modifiers.clone();
-    kvm_capabilities.push(KvmCapability::Add(KVM_CAP_USERFAULT));
+    if secret_free {
+        kvm_capabilities.push(KvmCapability::Add(KVM_CAP_USERFAULT));
+    }
 
     let (mut vmm, mut vcpus) = create_vmm_and_vcpus(
         instance_info,
