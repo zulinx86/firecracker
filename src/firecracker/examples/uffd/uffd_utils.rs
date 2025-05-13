@@ -48,7 +48,7 @@ pub fn uffd_continue(uffd: RawFd, fault_addr: u64, len: u64) -> std::io::Result<
     // UFFDIO_CONTINUE is typically defined as _IOWR(0xAA, 6, struct uffdio_continue)
     let ret = unsafe {
         libc::ioctl(
-            uffd, 0xc020aa07u32 as i32, // UFFDIO_CONTINUE ioctl number
+            uffd, 0xc020aa07u32 as i32 as libc::Ioctl, // UFFDIO_CONTINUE ioctl number
             &mut cont,
         )
     };
@@ -140,7 +140,7 @@ pub struct UffdHandler {
     pub mem_regions: Vec<GuestRegionUffdMapping>,
     pub page_size: usize,
     pub backing_buffer: *const u8, // fix this
-    uffd: Uffd,
+    pub(crate) uffd: Uffd,
     removed_pages: HashSet<u64>,
     pub guest_memfd: Option<File>,
     pub guest_memfd_addr: Option<*mut u8>,
@@ -538,7 +538,7 @@ impl Runtime {
     /// uffd object passed in.
     pub fn run(
         &mut self,
-        pf_event_dispatch: impl Fn(&mut UffdHandler),
+        mut pf_event_dispatch: impl FnMut(&mut UffdHandler),
         pf_vcpu_event_dispatch: impl Fn(&mut UffdHandler, u64) -> (u64, u64),
     ) {
         let mut pollfds = vec![];
