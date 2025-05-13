@@ -271,7 +271,7 @@ def test_population_latency(
         for _ in range(5):
             time.sleep(1)
 
-            match = re.match(
+            match = re.search(
                 r"Finished Faulting All: (\d+)us", microvm.uffd_handler.log_data
             )
 
