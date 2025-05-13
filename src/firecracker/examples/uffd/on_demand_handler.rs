@@ -29,8 +29,6 @@ fn main() {
     runtime.install_panic_hook();
     runtime.run(
         |uffd_handler: &mut UffdHandler| {
-            let mut ret_gpa: u64 = 0;
-            let mut ret_len: u64 = 0;
             // !DISCLAIMER!
             // When using UFFD together with the balloon device, this handler needs to deal with
             // `remove` and `pagefault` events. There are multiple things to keep in mind in
@@ -95,8 +93,6 @@ fn main() {
                             if !served {
                                 deferred_events.push(event);
                             }
-                            ret_gpa = offset as u64;
-                            ret_len = uffd_handler.page_size as u64;
                         }
                         userfaultfd::Event::Remove { start, end } => {
                             uffd_handler.mark_range_removed(start as u64, end as u64)
@@ -114,8 +110,6 @@ fn main() {
                     break;
                 }
             }
-
-            (ret_gpa, ret_len)
         },
         |uffd_handler: &mut UffdHandler, offset: u64| {
             let ret_gpa = offset;

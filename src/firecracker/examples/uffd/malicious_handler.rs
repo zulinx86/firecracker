@@ -34,7 +34,6 @@ fn main() {
             if let userfaultfd::Event::Pagefault { .. } = event {
                 panic!("Fear me! I am the malicious page fault handler.")
             }
-            (0, 0)
         },
         |_uffd_handler: &mut UffdHandler, _offset: u64| (0, 0),
     );

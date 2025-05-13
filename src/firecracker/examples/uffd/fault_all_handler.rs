@@ -46,7 +46,6 @@ fn main() {
                 }
                 _ => panic!("Unexpected event on userfaultfd"),
             }
-            (0, 0)
         },
         |_uffd_handler: &mut UffdHandler, _offset: u64| (0, 0),
     );

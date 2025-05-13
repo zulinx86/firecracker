@@ -538,7 +538,7 @@ impl Runtime {
     /// uffd object passed in.
     pub fn run(
         &mut self,
-        pf_event_dispatch: impl Fn(&mut UffdHandler) -> (u64, u64),
+        pf_event_dispatch: impl Fn(&mut UffdHandler),
         pf_vcpu_event_dispatch: impl Fn(&mut UffdHandler, u64) -> (u64, u64),
     ) {
         let mut pollfds = vec![];
@@ -723,21 +723,7 @@ impl Runtime {
                             .lock()
                             .unwrap();
                         // Handle one of uffd page faults
-                        let (offset, len) = pf_event_dispatch(locked_uffd.deref_mut());
-
-                        let fault_reply = FaultReply {
-                            vcpu: None,
-                            offset: offset,
-                            len: len,
-                            flags: 0,
-                            token: None,
-                            zero: false,
-                        };
-
-                        let reply = UffdMsgToFirecracker::FaultRep(fault_reply);
-                        let reply_json = serde_json::to_string(&reply).unwrap();
-                        // println!("Sending FaultReply: {:?}", reply_json);
-                        self.stream.write_all(reply_json.as_bytes()).unwrap();
+                        pf_event_dispatch(locked_uffd.deref_mut());
                     }
                 }
             }
