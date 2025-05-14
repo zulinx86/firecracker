@@ -413,12 +413,11 @@ impl UffdHandler {
     fn populate_via_memcpy(&mut self, src: u64, dst: u64, offset: u64, len: usize) -> bool {
         let dst_memcpy = self.guest_memfd_addr.expect("no guest_memfd addr") as u64 + offset;
 
-        if self.bitmap.get((offset / 4096) as usize).unwrap() == false {
+        if !self.bitmap[offset / 4096] {
             unsafe {
                 std::ptr::copy_nonoverlapping(src as *const u8, dst_memcpy as *mut u8, len as _);
             }
             self.bitmap.set((offset / 4096) as usize, true);
-
         }
 
         if let Err(err) = uffd_continue(self.uffd.as_raw_fd(), dst as _, len.try_into().unwrap()) {

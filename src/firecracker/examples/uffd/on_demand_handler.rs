@@ -112,34 +112,33 @@ fn main() {
             }
         },
         |uffd_handler: &mut UffdHandler, offset: u64| {
-            let ret_gpa = offset;
-            let ret_len = 4096;
+            let index = offset as usize / 4096;
 
-            let src = uffd_handler.backing_buffer as u64 + ret_gpa;
+            let src = unsafe {
+                uffd_handler.backing_buffer.add(offset as usize)
+            };
 
             unsafe {
-                if uffd_handler.bitmap.get((offset / 4096) as usize).unwrap() == false {
+                if !uffd_handler.bitmap[index] {
                     let bytes_written = pwrite64(
                         uffd_handler
                             .guest_memfd
                             .as_ref()
                             .expect("must exist")
                             .as_raw_fd(),
-                        src as _,
-                        ret_len as _,
-                        ret_gpa as _,
+                        src.cast(),
+                        4096,
+                        offset as libc::off64_t
                     );
 
-                    if bytes_written == -1 {
-                        panic!("Failed to call write: {}", std::io::Error::last_os_error());
-                    }
+                    assert_eq!(bytes_written, 4096, "Failed to call write: {:?}", std::io::Error::last_os_error());
 
-                    uffd_handler.bitmap.set((offset / 4096) as usize, true);
+                    uffd_handler.bitmap.set(index, true);
                 }
                 // println!("Wrote {} bytes", bytes_written);
             }
 
-            (ret_gpa, ret_len)
+            (offset, 4096)
         },
     );
 }
