@@ -30,53 +30,41 @@ fn main() {
     let mut runtime = Runtime::new(stream, file);
     runtime.install_panic_hook();
     runtime.run(
-        |uffd_handler: &mut UffdHandler| {
-            let mut events = Vec::new();
+        |uffd_handler| {
+            let event = uffd_handler.read_event().unwrap().unwrap();
 
-            while let Some(event) = uffd_handler.read_event().unwrap() {
-                events.push(event);
-            }
-
-            for event in events {
-                if let userfaultfd::Event::Pagefault { addr, .. } = event {
-                    if are_we_faulted_yet {
-                        uffd_continue(uffd_handler.uffd.as_raw_fd(), addr as _, 4096).inspect_err(|err| eprintln!("Error during uffdio_continue: {:?}", err));
-                    } else {
-                        fault_all(uffd_handler);
-
-                        are_we_faulted_yet = true;
-                    }
+            if let userfaultfd::Event::Pagefault { addr, .. } = event {
+                if are_we_faulted_yet {
+                        println!("Unexpectedly got a userfault at {:p} after faulting everything, calling continue", addr);
+                        _ = uffd_continue(uffd_handler.uffd.as_raw_fd(), addr as _, 4096)
+                            .inspect_err(|err| println!("Error during uffdio_continue: {:?}", err));
                 } else {
-                    panic!("Unexpected event on userfaultfd");
+                    fault_all(uffd_handler, addr);
+
+                    are_we_faulted_yet = true;
                 }
             }
+
+            uffd_handler.mem_regions.iter().map(|r| (r.offset, r.size as u64)).collect()
         },
-        |uffd_handler: &mut UffdHandler, offset: u64| {
-            (offset, 4096)
+        |_, _| {
+            // TODO: understand why we're receiving these. Sending back the entire memory as prefault above
+            // should have erased the kvm userfault bitmap, meaning no more kvm exits should happen.
+            (0, Vec::new())
         },
     );
 }
 
 
-fn fault_all(uffd_handler: &mut UffdHandler) {
+fn fault_all(uffd_handler: &mut UffdHandler, fault_addr: *mut libc::c_void) {
     let start = get_time_us(ClockType::Monotonic);
     for region in uffd_handler.mem_regions.clone() {
-        match &uffd_handler.guest_memfd {
+        match uffd_handler.guest_memfd {
             None => {
                 uffd_handler.serve_pf(region.base_host_virt_addr as _, region.size);
             }
-            Some(guest_memfd) => {
-                let src = uffd_handler.backing_buffer as u64 + region.offset;
-                let written = unsafe {
-                    libc::pwrite64(
-                        guest_memfd.as_raw_fd(),
-                        src as _,
-                        region.size,
-                        region.offset as libc::off64_t,
-                    )
-                };
-                assert!(written >= 0);
-                let written = written as u64;
+            Some(_) => {
+                let written = uffd_handler.populate_via_write(region.offset as usize, region.size);
 
                 // This code is written under the assumption that the first fault triggered by
                 // firecracker is due to device restoration reading from guest memory to
@@ -87,24 +75,17 @@ fn fault_all(uffd_handler: &mut UffdHandler) {
                 // Thus, to fault in everything, we now need to skip this one page, write the
                 // remaining region, and then deal with the "gap" via uffd_handler.serve_pf().
 
-                if (written as usize) < region.size - 4096 {
-                    let src = src + written + 4096;
-                    let size = region.size - written as usize - 4096;
-                    let offset = region.offset + written + 4096;
-                    let r = unsafe {libc::pwrite(guest_memfd.as_raw_fd(), src as _, size as _, offset as _)};
-                    assert!(r > 0);
-                    assert_eq!(written + r as u64, region.size as u64 - 4096);
-                }
+                println!("weren't able to write offset {}", region.offset as usize + written);
 
-                uffd_handler.serve_pf((region.base_host_virt_addr + written) as _, 4096);
+                if written < region.size - 4096 {
+                    let r = uffd_handler.populate_via_write(region.offset as usize + written + 4096, region.size - written - 4096);
+                    assert_eq!(written + r, region.size - 4096);
+                }
             }
         }
     }
+    uffd_handler.serve_pf(fault_addr.cast(), 4096);
     let end = get_time_us(ClockType::Monotonic);
 
     println!("Finished Faulting All: {}us", end - start);
-
-    for region in uffd_handler.mem_regions.clone() {
-        uffd_continue(uffd_handler.uffd.as_raw_fd(), region.base_host_virt_addr, region.size as u64);
-    }
 }

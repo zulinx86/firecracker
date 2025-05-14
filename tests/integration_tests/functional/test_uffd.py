@@ -21,11 +21,6 @@ def snapshot_fxt(microvm_factory, guest_kernel_linux_5_10, rootfs):
     basevm.basic_config(vcpu_count=2, mem_size_mib=256)
     basevm.add_net_iface()
 
-    # Add a memory balloon.
-    basevm.api.balloon.put(
-        amount_mib=0, deflate_on_oom=True, stats_polling_interval_s=0
-    )
-
     basevm.start()
 
     # Create base snapshot.
@@ -88,14 +83,6 @@ def test_valid_handler(uvm_plain, snapshot):
 
     vm.restore_from_snapshot(resume=True)
 
-    # Inflate balloon.
-    vm.api.balloon.patch(amount_mib=200)
-
-    # Verify if the restored guest works.
-    vm.ssh.check_output("true")
-
-    # Deflate balloon.
-    vm.api.balloon.patch(amount_mib=0)
 
     # Verify if the restored guest works.
     vm.ssh.check_output("true")

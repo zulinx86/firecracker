@@ -25,16 +25,8 @@ fn main() {
     let mut runtime = Runtime::new(stream, file);
     runtime.run(
         |uffd_handler: &mut UffdHandler| {
-            // Read an event from the userfaultfd.
-            let event = uffd_handler
-                .read_event()
-                .expect("Failed to read uffd_msg")
-                .expect("uffd_msg not ready");
-
-            if let userfaultfd::Event::Pagefault { .. } = event {
-                panic!("Fear me! I am the malicious page fault handler.")
-            }
+            panic!("Fear me! I am the malicious page fault handler.")
         },
-        |_uffd_handler: &mut UffdHandler, _offset: u64| (0, 0),
+        |_: &mut UffdHandler, _: usize| (0, vec![]),
     );
 }

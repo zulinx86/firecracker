@@ -7,11 +7,12 @@
 
 mod uffd_utils;
 
+use std::cell::RefCell;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
-
-use libc::pwrite64;
+use std::rc::Rc;
+use bitvec::vec::BitVec;
 use uffd_utils::{Runtime, UffdHandler};
 
 fn main() {
@@ -74,6 +75,8 @@ fn main() {
             // back to reading more events before we can continue processing `pagefault`s.
             let mut deferred_events = Vec::new();
 
+            let mut faulted_ranges = Vec::new();
+
             loop {
                 // First, try events that we couldn't handle last round
                 let mut events_to_handle = Vec::from_iter(deferred_events.drain(..));
@@ -93,6 +96,7 @@ fn main() {
                             if !served {
                                 deferred_events.push(event);
                             }
+                            faulted_ranges.push((offset as u64, 4096));
                         }
                         userfaultfd::Event::Remove { start, end } => {
                             uffd_handler.mark_range_removed(start as u64, end as u64)
@@ -110,35 +114,28 @@ fn main() {
                     break;
                 }
             }
+
+            faulted_ranges
         },
-        |uffd_handler: &mut UffdHandler, offset: u64| {
-            let index = offset as usize / 4096;
+        |uffd_handler: &mut UffdHandler, offset: usize| {
+            println!("Received vcpu fault at offset {}", offset);
 
-            let src = unsafe {
-                uffd_handler.backing_buffer.add(offset as usize)
-            };
+            let bytes_written = uffd_handler.populate_via_write(offset, 4096);
 
-            unsafe {
-                if !uffd_handler.bitmap[index] {
-                    let bytes_written = pwrite64(
-                        uffd_handler
-                            .guest_memfd
-                            .as_ref()
-                            .expect("must exist")
-                            .as_raw_fd(),
-                        src.cast(),
-                        4096,
-                        offset as libc::off64_t
-                    );
+            if bytes_written == 0 {
+                println!("got a vcpu fault for an already populated page");
+            } else {
+                assert_eq!(bytes_written, 4096);
 
-                    assert_eq!(bytes_written, 4096, "Failed to call write: {:?}", std::io::Error::last_os_error());
-
-                    uffd_handler.bitmap.set(index, true);
+                for r in &uffd_handler.mem_regions {
+                    if (r.offset as usize) <= offset && r.offset as usize + r.size > offset {
+                        uffd_handler.uffd.unregister((r.base_host_virt_addr + offset as u64 - r.offset) as _, 4096).unwrap();
+                        break
+                    }
                 }
-                // println!("Wrote {} bytes", bytes_written);
             }
 
-            (offset, 4096)
+            (4096, vec![])
         },
     );
 }
