@@ -482,15 +482,8 @@ impl GuestMemoryExtension for GuestMemoryMmap {
 
     /// Convert GPA to file offset
     fn gpa_to_offset(&self, gpa: GuestAddress) -> Option<u64> {
-        self.iter().find_map(|region| {
-            if region.start_addr() <= gpa && gpa <= region.last_addr() {
-                region
-                    .file_offset()
-                    .map(|reg_offset| gpa.0 - reg_offset.start())
-            } else {
-                None
-            }
-        })
+        self.find_region(gpa)
+            .map(|r| gpa.0 - r.start_addr().0 + r.file_offset().unwrap().start())
     }
 
     /// Convert file offset to GPA (Guest Physical Address)
