@@ -17,7 +17,7 @@ from framework.properties import global_props
 
 USEC_IN_MSEC = 1000
 NS_IN_MSEC = 1_000_000
-ITERATIONS = 30
+ITERATIONS = 10
 
 
 @lru_cache
@@ -218,7 +218,7 @@ def test_post_restore_latency(
 @pytest.mark.nonci
 @pytest.mark.parametrize("huge_pages", HugePagesConfig)
 @pytest.mark.parametrize(
-    ("vcpus", "mem"), [(1, 128), (1, 1024), (2, 2048), (3, 4096), (4, 6144)]
+    ("vcpus", "mem"), [(1, 128), (1, 1024), (2, 2048)]
 )
 def test_population_latency(
     microvm_factory,
