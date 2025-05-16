@@ -12,8 +12,10 @@ use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
 use std::rc::Rc;
+use userfaultfd::FaultKind;
 use bitvec::vec::BitVec;
 use uffd_utils::{Runtime, UffdHandler};
+use crate::uffd_utils::uffd_continue;
 
 fn main() {
     let mut args = std::env::args();
@@ -92,11 +94,21 @@ fn main() {
                     // event (if the balloon device is enabled).
                     match event {
                         userfaultfd::Event::Pagefault { addr, .. } => {
-                            let (served, offset) = uffd_handler.serve_pf(addr.cast(), uffd_handler.page_size);
-                            if !served {
-                                deferred_events.push(event);
+                            if !uffd_handler.bitmap.get(uffd_handler.addr_to_offset(addr.cast()) as usize / 4096).unwrap() {
+                                let (served, offset) = uffd_handler.serve_pf(addr.cast(), uffd_handler.page_size);
+                                if !served {
+                                    deferred_events.push(event);
+                                }
+                                faulted_ranges.push((offset as u64, 4096));
+                                uffd_handler.bitmap.set(offset / 4096, true);
+                            } else {
+                                if uffd_handler.guest_memfd.is_none() {
+                                    uffd_handler.uffd.wake(addr, 4096).unwrap();
+                                } else {
+                                    uffd_continue(uffd_handler.uffd.as_raw_fd(), addr as _, 4096)
+                                        .inspect_err(|err| println!("uffdio_continue error: {:?}", err));
+                                }
                             }
-                            faulted_ranges.push((offset as u64, 4096));
                         }
                         userfaultfd::Event::Remove { start, end } => {
                             uffd_handler.mark_range_removed(start as u64, end as u64)
@@ -127,12 +139,7 @@ fn main() {
             } else {
                 assert_eq!(bytes_written, 4096);
 
-                for r in &uffd_handler.mem_regions {
-                    if (r.offset as usize) <= offset && r.offset as usize + r.size > offset {
-                        uffd_handler.uffd.unregister((r.base_host_virt_addr + offset as u64 - r.offset) as _, 4096).unwrap();
-                        break
-                    }
-                }
+                uffd_handler.bitmap.set(offset / 4096, true);
             }
 
             (4096, vec![])

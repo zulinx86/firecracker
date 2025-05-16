@@ -35,9 +35,9 @@ fn main() {
 
             if let userfaultfd::Event::Pagefault { addr, .. } = event {
                 if are_we_faulted_yet {
-                        println!("Unexpectedly got a userfault at {:p} after faulting everything, calling continue", addr);
-                        _ = uffd_continue(uffd_handler.uffd.as_raw_fd(), addr as _, 4096)
-                            .inspect_err(|err| println!("Error during uffdio_continue: {:?}", err));
+                    println!("Unexpectedly got a userfault at {:p} after faulting everything, calling continue", addr);
+                    _ = uffd_continue(uffd_handler.uffd.as_raw_fd(), addr as _, 4096)
+                        .inspect_err(|err| println!("Error during uffdio_continue: {:?}", err));
                 } else {
                     fault_all(uffd_handler, addr);
 

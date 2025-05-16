@@ -60,6 +60,8 @@ pub fn uffd_continue(uffd: RawFd, fault_addr: u64, len: u64) -> std::io::Result<
     Ok(())
 }
 
+
+
 // This is the same with the one used in src/vmm.
 /// This describes the mapping between Firecracker base virtual address and offset in the
 /// buffer or file backend for a guest memory region. It is used to tell an external
@@ -314,6 +316,20 @@ impl UffdHandler {
         for pfn in pfn_start..pfn_end {
             self.removed_pages.insert(pfn);
         }
+    }
+
+    pub fn addr_to_offset(&self, addr: *mut u8) -> u64 {
+        let addr = addr as u64;
+        for region in &self.mem_regions {
+            if region.contains(addr) {
+                return addr - region.base_host_virt_addr + region.offset as u64;
+            }
+        }
+
+        panic!(
+            "Could not find addr: {:#x} within guest region mappings.",
+            addr
+        );
     }
 
     pub fn serve_pf(&mut self, addr: *mut u8, len: usize) -> (bool, usize) {
