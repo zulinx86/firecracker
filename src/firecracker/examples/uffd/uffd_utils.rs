@@ -333,8 +333,6 @@ impl UffdHandler {
     }
 
     pub fn serve_pf(&mut self, addr: *mut u8, len: usize) -> (bool, usize) {
-        println!("serving uffd event at {:p} of len {}", addr, len);
-
         // Find the start of the page that the current faulting address belongs to.
         let dst = (addr as usize & !(self.page_size - 1)) as *mut libc::c_void;
         let fault_page_addr = dst as u64;
@@ -402,8 +400,6 @@ impl UffdHandler {
         let mut total_written = 0;
 
         while total_written < len {
-            println!("{} < {} at offset {}", total_written, len, offset + total_written);
-
             let src = unsafe {
                 self.backing_buffer.add(offset + total_written)
             };
@@ -420,8 +416,6 @@ impl UffdHandler {
                 written @ 0.. => written as usize,
                 _ => panic!("{:?}", std::io::Error::last_os_error())
             };
-
-            println!("Written {}/{}", bytes_written, len_to_write);
 
             total_written += bytes_written;
 
@@ -593,18 +587,14 @@ impl Runtime {
                 panic!("Could not poll for events!")
             }
 
-            println!("Some FDs are ready for consumption! {}", nready);
-
             for i in skip_stream..pollfds.len() {
                 if nready == 0 {
                     break;
                 }
                 if pollfds[i].revents & libc::POLLIN != 0 {
-                    println!("FD that is ready: {}", pollfds[i].fd);
 
                     nready -= 1;
                     if pollfds[i].fd == self.stream.as_raw_fd() {
-                        println!("This is the UDS!");
                         const BUFFER_SIZE: usize = 4096;
 
                         let mut buffer = [0u8; BUFFER_SIZE];
@@ -644,8 +634,6 @@ impl Runtime {
                             while let Some(result) = parser.next() {
                                 match result {
                                     Ok(UffdMsgFromFirecracker::Mappings(mappings)) => {
-                                        println!("Received mappings: {:?}", mappings);
-
                                         // Handle new uffd from stream
                                         let handler =
                                             UffdHandler::from_mappings(
@@ -684,8 +672,6 @@ impl Runtime {
                                         total_consumed = parser.byte_offset();
                                     }
                                     Ok(UffdMsgFromFirecracker::FaultReq(fault_request)) => {
-                                        println!("Received FaultRequest: {:?}", fault_request);
-
                                         let fd = self.main_handler_fd.unwrap();
 
                                         let mut locked_uffd = self.uffds.get_mut(&fd)
@@ -735,7 +721,6 @@ impl Runtime {
                             }
                         }
                     } else {
-                        println!("UFFD time!");
                         let mut locked_uffd = self
                             .uffds
                             .get_mut(&pollfds[i].fd)

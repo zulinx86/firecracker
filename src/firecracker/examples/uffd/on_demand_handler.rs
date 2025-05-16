@@ -130,8 +130,6 @@ fn main() {
             faulted_ranges
         },
         |uffd_handler: &mut UffdHandler, offset: usize| {
-            println!("Received vcpu fault at offset {}", offset);
-
             let bytes_written = uffd_handler.populate_via_write(offset, 4096);
 
             if bytes_written == 0 {

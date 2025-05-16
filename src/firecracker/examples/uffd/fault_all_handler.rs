@@ -35,7 +35,6 @@ fn main() {
 
             if let userfaultfd::Event::Pagefault { addr, .. } = event {
                 if are_we_faulted_yet {
-                    println!("Unexpectedly got a userfault at {:p} after faulting everything, calling continue", addr);
                     _ = uffd_continue(uffd_handler.uffd.as_raw_fd(), addr as _, 4096)
                         .inspect_err(|err| println!("Error during uffdio_continue: {:?}", err));
                 } else {
@@ -74,8 +73,6 @@ fn fault_all(uffd_handler: &mut UffdHandler, fault_addr: *mut libc::c_void) {
                 // once it gets to the offset of that page (e.g. written < region.size above).
                 // Thus, to fault in everything, we now need to skip this one page, write the
                 // remaining region, and then deal with the "gap" via uffd_handler.serve_pf().
-
-                println!("weren't able to write offset {}", region.offset as usize + written);
 
                 if written < region.size - 4096 {
                     let r = uffd_handler.populate_via_write(region.offset as usize + written + 4096, region.size - written - 4096);
