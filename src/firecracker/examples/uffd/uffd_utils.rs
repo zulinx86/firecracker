@@ -463,8 +463,8 @@ pub struct Runtime {
     backing_file: File,
     backing_memory: *mut u8,
     backing_memory_size: usize,
-    uffds: HashMap<i32, Arc<Mutex<UffdHandler>>>,
-    handler: Option<Arc<Mutex<UffdHandler>>>,
+    uffds: HashMap<i32, UffdHandler>,
+    main_handler_fd: Option<i32>,
 }
 
 impl Runtime {
@@ -495,7 +495,7 @@ impl Runtime {
             backing_memory: ret.cast(),
             backing_memory_size,
             uffds: HashMap::default(),
-            handler: None,
+            main_handler_fd: None,
         }
     }
 
@@ -632,7 +632,7 @@ impl Runtime {
 
                                         // Handle new uffd from stream
                                         let handler =
-                                            Arc::new(Mutex::new(UffdHandler::from_mappings(
+                                            UffdHandler::from_mappings(
                                                 mappings,
                                                 unsafe { File::from_raw_fd(fds[0]) },
                                                 if secret_free {
@@ -642,27 +642,20 @@ impl Runtime {
                                                 },
                                                 self.backing_memory,
                                                 self.backing_memory_size,
-                                            )));
+                                            );
+
+                                        let fd = handler.uffd.as_raw_fd();
+
+                                        if handler.guest_memfd.is_some() {
+                                            self.main_handler_fd = Some(fd);
+                                        }
 
                                         pollfds.push(libc::pollfd {
-                                            fd: handler
-                                                .lock()
-                                                .expect("Poisoned lock")
-                                                .uffd
-                                                .as_raw_fd(),
+                                            fd,
                                             events: libc::POLLIN,
                                             revents: 0,
                                         });
-                                        self.uffds.insert(
-                                            handler.lock().expect("Poisoned lock").uffd.as_raw_fd(),
-                                            handler.clone(),
-                                        );
-
-                                        if let Some(_) =
-                                            handler.lock().expect("Poisoned lock").guest_memfd
-                                        {
-                                            self.handler = Some(handler.clone());
-                                        }
+                                        self.uffds.insert(fd, handler);
 
                                         // If connection is closed, we can skip the socket from
                                         // being polled.
@@ -677,11 +670,9 @@ impl Runtime {
                                     Ok(UffdMsgFromFirecracker::FaultReq(fault_request)) => {
                                         println!("Received FaultRequest: {:?}", fault_request);
 
-                                        let mut locked_uffd = self
-                                            .handler
-                                            .as_mut()
-                                            .expect("Poisoned lock")
-                                            .lock()
+                                        let fd = self.main_handler_fd.unwrap();
+
+                                        let mut locked_uffd = self.uffds.get_mut(&fd)
                                             .unwrap();
 
                                         assert!((fault_request.offset as usize) < locked_uffd.size(), "receive bogus offset from firecracker");
@@ -691,8 +682,6 @@ impl Runtime {
                                             locked_uffd.deref_mut(),
                                             fault_request.offset as usize,
                                         );
-
-                                        drop(locked_uffd);
 
                                         self.send_fault_reply(fault_request.into_reply(len));
 
@@ -734,14 +723,11 @@ impl Runtime {
                         let mut locked_uffd = self
                             .uffds
                             .get_mut(&pollfds[i].fd)
-                            .expect("Poisoned lock")
-                            .lock()
                             .unwrap();
                         // Handle one of uffd page faults
                         let faulted_ranges = pf_event_dispatch(locked_uffd.deref_mut());
 
                         let responses_needed = locked_uffd.guest_memfd.is_some();
-                        drop(locked_uffd);
 
                         // FIXME: currently, firecracker crashes if it receives a fault reply if guest_memfd isnt in use
                         if responses_needed {
