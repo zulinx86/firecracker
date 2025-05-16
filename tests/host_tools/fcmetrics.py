@@ -545,7 +545,10 @@ class FCMetricsMonitor(Thread):
             # this should also avoid any race condition leading to
             # uploading the same metrics twice
             self.join()
-            self.vm.api.actions.put(action_type="FlushMetrics")
+            try:
+                self.vm.api.actions.put(action_type="FlushMetrics")
+            except:
+                pass
             self._flush_metrics()
 
     def run(self):
