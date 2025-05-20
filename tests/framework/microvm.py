@@ -352,6 +352,8 @@ class Microvm:
         if self.memory_monitor:
             self.memory_monitor.check_samples()
 
+        del self.uffd_handler
+
     def _validate_api_response_times(self):
         """
         Parses the firecracker logs for information regarding api server request processing times, and asserts they
