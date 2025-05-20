@@ -17,7 +17,7 @@ from framework.properties import global_props
 
 USEC_IN_MSEC = 1000
 NS_IN_MSEC = 1_000_000
-ITERATIONS = 10
+ITERATIONS = 30
 
 
 @lru_cache
