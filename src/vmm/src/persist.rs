@@ -541,6 +541,7 @@ pub fn guest_memory_from_uffd(
     track_dirty_pages: bool,
     huge_pages: HugePageConfig,
     guest_memfd: Option<File>,
+    userfault_memfd: Option<&File>,
 ) -> Result<(Vec<GuestRegionMmap>, Option<Uffd>, Option<UnixStream>), GuestMemoryFromUffdError> {
     let guest_memfd_copy = guest_memfd.as_ref().map(|f| f.try_clone()).transpose()?;
     let (guest_memory, backend_mappings) =
@@ -564,7 +565,7 @@ pub fn guest_memory_from_uffd(
     let fds = match guest_memfd_copy {
         Some(ref guest_memfd) => {
             guest_memory_uffd_register_minor(&guest_memory, &uffd);
-            vec![uffd.as_raw_fd(), guest_memfd.as_raw_fd()]
+            vec![uffd.as_raw_fd(), guest_memfd.as_raw_fd(), userfault_memfd.expect("memfd is not present").as_raw_fd()]
         }
         None => {
             for mem_region in guest_memory.iter() {

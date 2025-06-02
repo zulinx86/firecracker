@@ -18,7 +18,6 @@ use kvm_bindings::{
     kvm_create_guest_memfd, kvm_memory_attributes, kvm_userspace_memory_region,
 };
 use kvm_ioctls::{Cap, VmFd};
-use utils::userfault_bitmap::UserfaultBitmap;
 use vmm_sys_util::eventfd::EventFd;
 use vmm_sys_util::ioctl::ioctl_with_ref;
 use vmm_sys_util::{ioctl_ioc_nr, ioctl_iow_nr};
@@ -273,10 +272,35 @@ impl Vm {
     pub fn register_memory_regions(
         &mut self,
         regions: Vec<GuestRegionMmap>,
-        userfault_bitmap: Option<&UserfaultBitmap>,
+        userfault_memfd: Option<&File>,
     ) -> Result<(), VmError> {
+        let addr = match userfault_memfd {
+            Some(file) =>  {
+                let addr = unsafe {
+                    libc::mmap(
+                        std::ptr::null_mut(),
+                        file.metadata().unwrap().len() as usize,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_SHARED,
+                        file.as_raw_fd(),
+                        0
+                    )
+                };
+
+                if addr == libc::MAP_FAILED {
+                    panic!(
+                        "Failed to mmap userfault bitmap file: {}",
+                        io::Error::last_os_error()
+                    );
+                }
+
+                addr as u64
+            },
+            None => 0,
+        };
+
         for region in regions {
-            self.register_memory_region(region, userfault_bitmap)?
+            self.register_memory_region(region, addr)?
         }
 
         Ok(())
@@ -312,7 +336,7 @@ impl Vm {
     pub fn register_memory_region(
         &mut self,
         region: GuestRegionMmap,
-        userfault_bitmap: Option<&UserfaultBitmap>,
+        userfault_addr: u64,
     ) -> Result<(), VmError> {
         // TODO: take it from kvm-bindings when merged upstream
         const KVM_MEM_USERFAULT: u32 = 1 << 3;
@@ -344,9 +368,10 @@ impl Vm {
             (0, 0)
         };
 
-        let userfault_bitmap = if let Some(bitmap) = userfault_bitmap {
+        let userfault_bitmap = if userfault_addr != 0 {
             flags |= KVM_MEM_USERFAULT;
-            bitmap.as_ptr() as u64
+            // Multiple by 8, because there are 8 bits per byte in the bitmap.
+            userfault_addr + region.file_offset().unwrap().start() / (4096 * 8)
         } else {
             0
         };

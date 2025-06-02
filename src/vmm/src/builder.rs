@@ -5,6 +5,7 @@
 
 use std::fmt::Debug;
 use std::io;
+use std::io::Write;
 use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
 #[cfg(feature = "gdb")]
@@ -15,7 +16,6 @@ use event_manager::{MutEventSubscriber, SubscriberOps};
 use libc::EFD_NONBLOCK;
 use linux_loader::cmdline::Cmdline as LoaderKernelCmdline;
 use utils::time::TimestampUs;
-use utils::userfault_bitmap::UserfaultBitmap;
 #[cfg(target_arch = "aarch64")]
 use vm_memory::GuestAddress;
 #[cfg(target_arch = "aarch64")]
@@ -193,7 +193,6 @@ fn create_vmm_and_vcpus(
         vm,
         uffd: None,
         uffd_socket: None,
-        userfault_bitmap: None,
         userfault_channels,
         vcpus_handles: Vec::new(),
         vcpus_exit_evt,
@@ -526,6 +525,34 @@ pub fn build_microvm_from_snapshot(
         false => None,
     };
 
+    let userfault_memfd = if secret_free {
+        let bitmap_size = vm_resources.memory_size() / 4096;
+
+        // Create a memfd.
+        let opts = memfd::MemfdOptions::default().allow_sealing(true);
+        let bitmap_file = opts.create("userfault_bitmap").unwrap();
+
+        // Resize to guest mem size.
+        bitmap_file.as_file().set_len(bitmap_size as u64).unwrap();
+
+        // Add seals to prevent further resizing.
+        let mut seals = memfd::SealsHashSet::new();
+        seals.insert(memfd::FileSeal::SealShrink);
+        seals.insert(memfd::FileSeal::SealGrow);
+        bitmap_file.add_seals(&seals).unwrap();
+
+        // Prevent further sealing changes.
+        bitmap_file.add_seal(memfd::FileSeal::SealSeal).unwrap();
+
+        // Write 0xff to all bytes
+        let all_set = vec![0xffu8; bitmap_size];
+        bitmap_file.as_file().write_all(&all_set).unwrap();
+
+        Some(bitmap_file.into_file())
+    } else {
+        None
+    };
+
     let mem_backend_path = &params.mem_backend.backend_path;
     let mem_state = &microvm_state.vm_state.memory;
     let track_dirty_pages = params.enable_diff_snapshots;
@@ -551,23 +578,17 @@ pub fn build_microvm_from_snapshot(
             track_dirty_pages,
             vm_resources.machine_config.huge_pages,
             guest_memfd,
+            userfault_memfd.as_ref(),
         )
         .map_err(BuildMicrovmFromSnapshotErrorGuestMemoryError::Uffd)?,
     };
 
-    let userfault_bitmap = if secret_free {
-        Some(UserfaultBitmap::new(vm_resources.memory_size() / 4096)) // TODO base page
-    } else {
-        None
-    };
-
     vmm.vm
-        .register_memory_regions(guest_memory, userfault_bitmap.as_ref())
+        .register_memory_regions(guest_memory, userfault_memfd.as_ref())
         .map_err(VmmError::Vm)
         .map_err(StartMicrovmError::Internal)?;
     vmm.uffd = uffd;
     vmm.uffd_socket = socket;
-    vmm.userfault_bitmap = userfault_bitmap;
 
     #[cfg(target_arch = "x86_64")]
     vmm.vm.set_memory_private().map_err(VmmError::Vm)?;

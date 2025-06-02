@@ -123,7 +123,6 @@ use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
-use ::utils::userfault_bitmap::UserfaultBitmap;
 use device_manager::acpi::ACPIDeviceManager;
 use device_manager::resources::ResourceAllocator;
 use devices::acpi::vmgenid::VmGenIdError;
@@ -319,8 +318,6 @@ pub struct Vmm {
     uffd: Option<Uffd>,
     // Used for userfault communication with the UFFD handler when secret freedom is enabled
     uffd_socket: Option<UnixStream>,
-    // Used for userfault communication with KVM when secret freedom is enabled
-    userfault_bitmap: Option<UserfaultBitmap>,
     // Used for userfault communication with vCPUs when secret freedom is enabled
     userfault_channels: Option<Vec<UserfaultChannel>>,
     vcpus_handles: Vec<VcpuHandle>,
@@ -1019,11 +1016,11 @@ impl MutEventSubscriber for Vmm {
                         Ok(fault_reply) => {
                             // println!("Received FaultReply: {:?}", fault_reply);
 
-                            let bitmap = self.userfault_bitmap.as_mut().unwrap();
+                            /* let bitmap = self.userfault_bitmap.as_mut().unwrap();
                             let base: usize = (fault_reply.offset / 4096).try_into().unwrap();
                             let len: usize = (fault_reply.len / 4096).try_into().unwrap();
 
-                            bitmap.clear_bits(base, len);
+                            bitmap.clear_bits(base, len); */
 
                             let gpa = self
                                 .vm

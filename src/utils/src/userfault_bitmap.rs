@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// where each `u64` holds 64 bits of the bitmap.
 #[derive(Debug)]
 pub struct UserfaultBitmap {
-    bits: Box<[AtomicU64]>,
+    bits: &'static mut [AtomicU64],
 }
 
 impl UserfaultBitmap {
@@ -28,7 +28,7 @@ impl UserfaultBitmap {
     /// use utils::userfault_bitmap::UserfaultBitmap;
     /// let bitmap = UserfaultBitmap::new(256); // Creates a bitmap with 256 bits
     /// ```
-    pub fn new(num_bits: usize) -> Self {
+    /* pub fn new(num_bits: usize) -> Self {
         let num_u64s = (num_bits + 63) / 64; // Round up to nearest multiple of 64
         let mut bits = Vec::with_capacity(num_u64s);
         for _ in 0..num_u64s {
@@ -37,6 +37,39 @@ impl UserfaultBitmap {
         UserfaultBitmap {
             bits: bits.into_boxed_slice(),
         }
+    } */
+
+    /// Creates a new `UserfaultBitmap` at the specified address.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that:
+    /// - The address points to valid memory that can hold num_u64s of AtomicU64
+    /// - The address is properly aligned for AtomicU64
+    /// - The memory will remain valid for the lifetime of the UserfaultBitmap
+    /// - No other code will access this memory while the UserfaultBitmap exists
+    pub unsafe fn new_at_addr(addr: *mut u8, num_bits: usize) -> Self {
+        let num_u64s = (num_bits + 63) / 64; // Round up to nearest multiple of 64
+
+        // Check alignment
+        assert_eq!(
+            addr.align_offset(std::mem::align_of::<AtomicU64>()),
+            0,
+            "Address must be aligned to AtomicU64"
+        );
+
+        // Cast the pointer
+        let atomic_ptr = addr as *mut AtomicU64;
+
+        // Create a slice from the raw parts
+        let bits = unsafe { std::slice::from_raw_parts_mut(atomic_ptr, num_u64s) };
+
+        // Initialize all bits to 1
+        for atomic_u64 in bits.iter_mut() {
+            atomic_u64.store(u64::MAX, Ordering::SeqCst);
+        }
+
+        UserfaultBitmap { bits }
     }
 
     /// Atomically sets or clears a bit at the specified index.
