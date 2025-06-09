@@ -351,12 +351,8 @@ fn main_exec() -> Result<(), MainError> {
         init_metrics(metrics_config).map_err(MainError::MetricsInitialization)?;
     }
 
-    let mut seccomp_filters: BpfThreadMap = SeccompConfig::from_args(
-        arguments.flag_present("no-seccomp"),
-        arguments.single_value("seccomp-filter"),
-    )
-    .and_then(seccomp::get_filters)
-    .map_err(MainError::SeccompFilter)?;
+    let mut seccomp_filters: BpfThreadMap = seccomp::get_filters(SeccompConfig::None)
+        .map_err(MainError::SeccompFilter)?;
 
     let vmm_config_json = arguments
         .single_value("config-file")
