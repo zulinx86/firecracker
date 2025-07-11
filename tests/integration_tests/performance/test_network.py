@@ -3,7 +3,10 @@
 """Tests the network latency of a Firecracker guest."""
 
 import json
+import os
 import re
+import signal
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -49,6 +52,7 @@ def network_microvm(request, microvm_factory, guest_kernel_acpi, rootfs):
     vm.spawn(log_level="Info", emit_metrics=True)
     vm.basic_config(vcpu_count=guest_vcpus, mem_size_mib=guest_mem_mib)
     vm.add_net_iface()
+    vm.add_net_iface()
     vm.start()
     vm.pin_threads(0)
 
@@ -74,12 +78,20 @@ def test_network_latency(network_microvm, metrics):
     )
 
     samples = []
-    host_ip = network_microvm.iface["eth0"]["iface"].host_ip
+    host_ip = network_microvm.iface["eth1"]["iface"].host_ip
 
     for _ in range(rounds):
-        _, ping_output, _ = network_microvm.ssh.check_output(
-            f"ping -c {request_per_round} -i {delay} {host_ip}"
+        cmd = ["ip", "netns", "exec", network_microvm.ssh.netns, "tcpdump", "-i", "eth1"]
+        tcpdump = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
         )
+        _, ping_output, _ = network_microvm.ssh.check_output(
+            f"ping -I eth1 -c {request_per_round} -i {delay} {host_ip}"
+        )
+        os.killpg(tcpdump.pid, signal.SIGINT)
+        tcpdump_stdout, tcpdump_stderr = tcpdump.communicate()
+        print(tcpdump_stdout.decode('utf-8'))
+        print(tcpdump_stderr.decode('utf-8'))
 
         samples.extend(consume_ping_output(ping_output, request_per_round))
 
