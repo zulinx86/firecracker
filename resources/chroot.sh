@@ -73,5 +73,17 @@ cat >> /etc/sysctl.conf <<EOF
 kernel.unprivileged_bpf_disabled=1
 EOF
 
+# Install Go
+arch=$(uname -m)
+case $arch in
+    x86_64) arch=amd64 ;;
+    aarch64) arch=arm64 ;;
+esac
+version=$(curl -s https://go.dev/VERSION?m=text | head -n1)
+archive="${version}.linux-${arch}.tar.gz"
+curl -LO http://go.dev/dl/${archive}
+tar -C /usr/local -xzf $archive
+# rm -rf $archive /usr/local/go/{api,doc,misc,test}
+
 # Build a manifest
 dpkg-query --show >/root/manifest
