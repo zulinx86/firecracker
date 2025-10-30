@@ -121,7 +121,7 @@ class SSHConnection:
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
-            "ConnectTimeout=2",
+            "ConnectTimeout=600",
             # Set up a persistent background connection
             "-o",
             "ControlMaster=auto",
