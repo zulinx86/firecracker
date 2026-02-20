@@ -69,7 +69,7 @@ impl Aml for ACPIDeviceManager {
                     "_CRS".try_into()?,
                     &aml::ResourceTemplate::new(vec![
                         &aml::Interrupt::new(true, true, false, false, self.vmgenid.gsi),
-                        &aml::Interrupt::new(true, true, false, false, self.vmclock.gsi),
+                        // &aml::Interrupt::new(true, true, false, false, self.vmclock.gsi),
                     ]),
                 )?,
                 // We know that the maximum IRQ number fits in a u8. We have up to
@@ -89,14 +89,14 @@ impl Aml for ACPIDeviceManager {
                                 &0x80usize,
                             )],
                         ),
-                        &aml::If::new(
-                            #[allow(clippy::cast_possible_truncation)]
-                            &aml::Equal::new(&aml::Arg(0), &(self.vmclock.gsi as u8)),
-                            vec![&aml::Notify::new(
-                                &aml::Path::new("\\_SB_.VCLK")?,
-                                &0x80usize,
-                            )],
-                        ),
+                        // &aml::If::new(
+                        //     #[allow(clippy::cast_possible_truncation)]
+                        //     &aml::Equal::new(&aml::Arg(0), &(self.vmclock.gsi as u8)),
+                        //     vec![&aml::Notify::new(
+                        //         &aml::Path::new("\\_SB_.VCLK")?,
+                        //         &0x80usize,
+                        //     )],
+                        // ),
                     ],
                 ),
             ],
