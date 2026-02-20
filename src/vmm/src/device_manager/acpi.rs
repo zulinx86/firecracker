@@ -46,7 +46,7 @@ impl ACPIDeviceManager {
 
     #[cfg(target_arch = "x86_64")]
     pub fn attach_vmclock(&self, vm: &Vm) -> Result<(), ACPIDeviceError> {
-        vm.register_irq(&self.vmclock.interrupt_evt, self.vmclock.gsi)?;
+        // vm.register_irq(&self.vmclock.interrupt_evt, self.vmclock.gsi)?;
         self.vmclock.activate(vm.guest_memory())?;
         Ok(())
     }
