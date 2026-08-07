@@ -3,6 +3,7 @@
 """Tests scenario for the Firecracker serial console."""
 
 import fcntl
+import json
 import os
 import platform
 import signal
@@ -13,11 +14,17 @@ from pathlib import Path
 import pytest
 
 from framework import utils
-from framework.artifacts import GUEST_KERNEL_DEFAULT, pin_guest_kernel
+from framework.artifacts import (
+    GUEST_KERNEL_DEFAULT,
+    GUEST_KERNELS_6_18,
+    pin_guest_kernel,
+    pin_pci,
+)
 from framework.microvm import Serial
 from framework.utils_cpu_templates import ALL_CPU_TEMPLATES, pin_cpu_template
 
 PLATFORM = platform.machine()
+SERIAL_LOGIN_OUTPUT = "uid=0(root) gid=0(root) groups=0(root)"
 
 
 @pin_guest_kernel(GUEST_KERNEL_DEFAULT)
@@ -134,7 +141,60 @@ def test_serial_console_login(uvm):
     serial.open()
     serial.rx(microvm.distro.shell_prompt)
     serial.tx("id")
-    serial.rx("uid=0(root) gid=0(root) groups=0(root)")
+    serial.rx(SERIAL_LOGIN_OUTPUT)
+
+
+@pytest.mark.nonci
+@pin_guest_kernel(GUEST_KERNELS_6_18)
+@pin_pci(False)
+@pytest.mark.parametrize(
+    "wait_for_idle",
+    [False, True],
+    ids=["IMMEDIATE", "AFTER_IDLE"],
+)
+def test_serial_console_login_repro(uvm, results_dir, wait_for_idle):
+    """Reproduce serial input loss immediately after the shell prompt."""
+    microvm = uvm
+    microvm.help.enable_console()
+    microvm.spawn(serial_out_path=None)
+    microvm.memory_monitor = None
+    microvm.basic_config(vcpu_count=1)
+    microvm.start()
+
+    serial = Serial(microvm)
+    serial.open()
+    serial.rx(microvm.distro.shell_prompt)
+    if wait_for_idle:
+        serial.drain_until_idle()
+
+    send_result = microvm.serial_input("id\n")
+    start = time.monotonic()
+    output = ""
+    while SERIAL_LOGIN_OUTPUT not in output and time.monotonic() - start < 10:
+        output += serial.rx_char()
+
+    elapsed_seconds = time.monotonic() - start
+    uart_metrics = microvm.flush_metrics()["uart"]
+    result = {
+        "wait_for_idle": wait_for_idle,
+        "screen_command": {
+            "returncode": send_result.returncode,
+            "stdout": send_result.stdout,
+            "stderr": send_result.stderr,
+        },
+        "command_echo_seen": any(line.strip() == "id" for line in output.splitlines()),
+        "id_output_seen": SERIAL_LOGIN_OUTPUT in output,
+        "serial_output_after_command": output,
+        "elapsed_seconds": elapsed_seconds,
+        "uart_metrics": uart_metrics,
+    }
+    result_path = results_dir / "serial-console-login-repro.json"
+    result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    assert result["id_output_seen"], (
+        f"Serial login output was not received after {elapsed_seconds:.2f}s; "
+        f"diagnostics: {result_path}"
+    )
 
 
 def get_total_mem_size(pid):
