@@ -39,6 +39,23 @@ def choices_from_env(name, choices):
     return selected
 
 
+def add_pull_request_fetch(pipeline, pull_request, revision):
+    """Fetch a historical PR revision before each architecture build."""
+    fetch_commands = [
+        (
+            "git fetch --no-tags "
+            "https://github.com/firecracker-microvm/firecracker.git "
+            f"refs/pull/{pull_request}/head"
+        ),
+        f'test "$(git rev-parse --verify FETCH_HEAD)" = "{revision}"',
+    ]
+    build_groups = [step for step in pipeline.steps if step.get("group") == "build"]
+    if len(build_groups) != 1:
+        raise RuntimeError("Expected exactly one shared build group")
+    for build_step in build_groups[0]["steps"]:
+        build_step["command"] = fetch_commands + build_step["command"]
+
+
 revision = os.environ.get("SERIAL_REPRO_REVISION")
 if revision is not None:
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
@@ -46,16 +63,24 @@ if revision is not None:
     os.environ["REVISION_A"] = revision
     os.environ["REVISION_B"] = revision
 
+pull_request = os.environ.get("SERIAL_REPRO_PULL_REQUEST")
+if pull_request is not None:
+    if revision is None:
+        raise ValueError("SERIAL_REPRO_PULL_REQUEST requires SERIAL_REPRO_REVISION")
+    pull_request = positive_int_from_env("SERIAL_REPRO_PULL_REQUEST", 0)
+
 repeat_count = positive_int_from_env("SERIAL_REPRO_COUNT", 100)
 worker_count = positive_int_from_env("SERIAL_REPRO_WORKERS", 16)
 targets = choices_from_env("SERIAL_REPRO_TARGETS", TARGETS)
 modes = choices_from_env("SERIAL_REPRO_MODES", MODES)
 pipeline = BKPipeline(timeout_in_minutes=45)
+if pull_request is not None:
+    add_pull_request_fetch(pipeline, pull_request, revision)
 
 for mode in modes:
-    binary_dir = f"--binary-dir=../build/{revision} " if revision else ""
+    BINARY_DIR = f"--binary-dir=../build/{revision} " if revision else ""
     PYTEST_OPTS = (
-        f"{binary_dir}-m nonci -n {worker_count} --dist worksteal "
+        f"{BINARY_DIR}-m nonci -n {worker_count} --dist worksteal "
         f"--count={repeat_count} --repeat-scope=function --maxfail=1 "
         "integration_tests/functional/test_serial_io.py "
         f"-k 'test_serial_console_login_repro and {mode}'"
