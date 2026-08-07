@@ -73,6 +73,9 @@ repeat_count = positive_int_from_env("SERIAL_REPRO_COUNT", 100)
 worker_count = positive_int_from_env("SERIAL_REPRO_WORKERS", 16)
 targets = choices_from_env("SERIAL_REPRO_TARGETS", TARGETS)
 modes = choices_from_env("SERIAL_REPRO_MODES", MODES)
+dump_on_failure = os.environ.get("SERIAL_REPRO_DUMP_ON_FAILURE", "1")
+if dump_on_failure not in {"0", "1"}:
+    raise ValueError("SERIAL_REPRO_DUMP_ON_FAILURE must be 0 or 1")
 pipeline = BKPipeline(timeout_in_minutes=45)
 if pull_request is not None:
     add_pull_request_fetch(pipeline, pull_request, revision)
@@ -92,7 +95,7 @@ for mode in modes:
             pipeline.devtool_test(pytest_opts=PYTEST_OPTS),
             instances=[instance],
             platforms=[platform],
-            env={"FC_TEST_DUMP_ON_FAILURE": "1"},
+            env={"FC_TEST_DUMP_ON_FAILURE": dump_on_failure},
         )
 
 print(pipeline.to_json())
