@@ -7,7 +7,9 @@ set -eu -o pipefail
 
 PS4='+\t '
 
-cd $(dirname $0)
+INVOCATION_DIR=$PWD
+cd "$(dirname "$0")"
+KERNEL_SOURCE=""
 ARCH=$(uname -m)
 OUTPUT_DIR=$PWD/$ARCH
 
@@ -127,36 +129,34 @@ function get_tag {
 function build_al_kernel {
     local KERNEL_CFG=$1
     # Extract the kernel version from the config file provided as parameter.
-    local KERNEL_VERSION=$(echo $KERNEL_CFG | grep -Po "microvm-kernel-ci-$ARCH-\K(\d+\.\d+)")
+    local KERNEL_VERSION=$(echo "$KERNEL_CFG" | grep -Po "microvm-kernel-ci-$ARCH-\K(\d+\.\d+)")
 
-    pushd linux
-    # fails immediately after clone because nothing is checked out
-    make distclean || true
+    pushd "${KERNEL_SOURCE:-$PWD/linux}"
+    if [[ -z "$KERNEL_SOURCE" ]]; then
+        # A freshly cloned repository has nothing checked out yet.
+        make distclean || true
+        TAG=$(get_tag "$KERNEL_VERSION")
+        git checkout "$TAG"
+        git checkout -B "tmp-$TAG"
 
-    TAG=$(get_tag $KERNEL_VERSION)
-
-    git checkout $TAG
-    # Create a temporary branch where we can apply patches and then
-    # easily discard them
-    git checkout -B tmp-$TAG
-
-    # Apply any patchset we have for our kernels
-    for patchset in ../patches/*; do
-        [ -d "$patchset/$KERNEL_VERSION" ] || continue
-        echo "Applying patchset ${patchset}/${KERNEL_VERSION}"
-        git apply ${patchset}/${KERNEL_VERSION}/*.patch
-    done
+        # Prepared sources already contain their intended patches.
+        for patchset in ../patches/*; do
+            [ -d "$patchset/$KERNEL_VERSION" ] || continue
+            echo "Applying patchset ${patchset}/${KERNEL_VERSION}"
+            git apply "$patchset/$KERNEL_VERSION/"*.patch
+        done
+    fi
 
     arch=$(uname -m)
     if [ "$arch" = "x86_64" ]; then
         format="elf"
-        target="vmlinux bzImage"
+        target=(vmlinux bzImage)
         binary_path="vmlinux"
         bzimage_path="arch/x86/boot/bzImage"
     elif [ "$arch" = "aarch64" ]; then
         format="pe"
-        target="Image"
-        binary_path="arch/arm64/boot/$target"
+        target=(Image)
+        binary_path="arch/arm64/boot/Image"
         bzimage_path=""
     else
         echo "FATAL: Unsupported architecture!"
@@ -166,24 +166,26 @@ function build_al_kernel {
     # as needed. Later values override earlier ones.
     awk 1 "$@" >.config
     make olddefconfig
-    make -j $(nproc) $target
+    make --jobs="$(nproc)" "${target[@]}"
     LATEST_VERSION=$(cat include/config/kernel.release)
-    flavour=$(basename $KERNEL_CFG .config |grep -Po "\d+\.\d+\K(-.*)" || true)
+    flavour=$(basename "$KERNEL_CFG" .config |grep -Po "\d+\.\d+\K(-.*)" || true)
     # Strip off everything after the last number - sometimes AL kernels have some stuff there.
     # e.g. vmlinux-4.14.348-openela -> vmlinux-4.14.348
     normalized_version=$(echo "$LATEST_VERSION" | sed -E "s/(.*[[:digit:]]).*/\1/g")
     OUTPUT_FILE=$OUTPUT_DIR/vmlinux-$normalized_version$flavour
-    cp -v $binary_path $OUTPUT_FILE
-    cp -v .config $OUTPUT_FILE.config
+    cp -v "$binary_path" "$OUTPUT_FILE"
+    cp -v .config "$OUTPUT_FILE.config"
     if [ -n "$bzimage_path" ]; then
-        cp -v $bzimage_path $OUTPUT_DIR/bzImage-$normalized_version$flavour
+        cp -v "$bzimage_path" "$OUTPUT_DIR/bzImage-$normalized_version$flavour"
     fi
 
     # Undo any patches previously applied, so that we can build the same kernel with different
     # configs, e.g. no-acpi
-    git reset --hard HEAD
-    git clean -f -d
-    git checkout -
+    if [[ -z "$KERNEL_SOURCE" ]]; then
+        git reset --hard HEAD
+        git clean -f -d
+        git checkout -
+    fi
 
     popd &>/dev/null
 }
@@ -216,60 +218,70 @@ function vmlinux_split_debuginfo {
     VMLINUX_ORIG="$VMLINUX"
     if [ $ARCH = "aarch64" ]; then
         # in aarch64, the debug info is in vmlinux
-        VMLINUX_ORIG=linux/vmlinux
+        VMLINUX_ORIG="${KERNEL_SOURCE:-$PWD/linux}/vmlinux"
     fi
-    objcopy --only-keep-debug $VMLINUX_ORIG $DEBUGINFO
-    objcopy --preserve-dates --strip-debug --add-gnu-debuglink=$DEBUGINFO $VMLINUX
+    objcopy --only-keep-debug "$VMLINUX_ORIG" "$DEBUGINFO"
+    objcopy --preserve-dates --strip-debug --add-gnu-debuglink="$DEBUGINFO" "$VMLINUX"
     # gdb does not support compressed files, but compress them because they are huge
-    gzip -v $DEBUGINFO
+    gzip --force --verbose "$DEBUGINFO"
+}
+
+# Validate before installing dependencies or modifying the source tree.
+function parse_kernel_args {
+    KERNEL_VERSION=all
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+        KERNEL_VERSION=$1
+        shift
+        [[ "$KERNEL_VERSION" == @(5.10|5.10-no-acpi|6.1|6.18) ]] || die "Unsupported kernel version: '$KERNEL_VERSION'."
+    fi
+    if [[ $# -gt 0 ]]; then
+        [[ $# -eq 2 && "$1" == --kernel-source && -n "$2" ]] || die "Expected --kernel-source PATH after a supported kernel version."
+        [[ "$KERNEL_VERSION" != all ]] || die "--kernel-source requires an explicit supported kernel version."
+        KERNEL_SOURCE=$2
+        [[ "$KERNEL_SOURCE" = /* ]] || KERNEL_SOURCE="$INVOCATION_DIR/$KERNEL_SOURCE"
+        [[ -d "$KERNEL_SOURCE" && -w "$KERNEL_SOURCE" && -f "$KERNEL_SOURCE/Makefile" && -d "$KERNEL_SOURCE/scripts/kconfig" ]] || die "Expected a writable prepared kernel source tree: '$KERNEL_SOURCE'."
+        KERNEL_SOURCE=$(cd "$KERNEL_SOURCE" && pwd -P)
+        [[ "$ARCH" != aarch64 || "$KERNEL_VERSION" != 5.10-no-acpi ]] || die "5.10-no-acpi is only supported on x86_64."
+    fi
 }
 
 function build_al_kernels {
-    if [[ $# = 0 ]]; then
-        local KERNEL_VERSION="all"
-    elif [[ $# -ne 1 ]]; then
-        die "Too many arguments in '$(basename $0) kernels' command. Please use \`$0 help\` for help."
-    else
-        KERNEL_VERSION=$1
-        if [[ "$KERNEL_VERSION" != @(5.10|5.10-no-acpi|6.1|6.18) ]]; then
-            die "Unsupported kernel version: '$KERNEL_VERSION'. Please use \`$0 help\` for help."
-        fi
+    if [[ -z "$KERNEL_SOURCE" ]]; then
+        clone_amazon_linux_repo
     fi
-
-    clone_amazon_linux_repo
 
     CI_CONFIG="$PWD/guest_configs/ci.config"
     NVME_CONFIG="$PWD/guest_configs/nvme.config"
 
     if [[ "$KERNEL_VERSION" == @(all|5.10) ]]; then
-        build_al_kernel $PWD/guest_configs/microvm-kernel-ci-$ARCH-5.10.config "$CI_CONFIG" "$NVME_CONFIG"
+        build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-5.10.config" "$CI_CONFIG" "$NVME_CONFIG"
     fi
     if [[ $ARCH == "x86_64" && "$KERNEL_VERSION" == @(all|5.10-no-acpi) ]]; then
-        build_al_kernel $PWD/guest_configs/microvm-kernel-ci-$ARCH-5.10-no-acpi.config "$CI_CONFIG" "$NVME_CONFIG"
+        build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-5.10-no-acpi.config" "$CI_CONFIG" "$NVME_CONFIG"
     fi
     if [[ "$KERNEL_VERSION" == @(all|6.1) ]]; then
-        build_al_kernel $PWD/guest_configs/microvm-kernel-ci-$ARCH-6.1.config "$CI_CONFIG" "$NVME_CONFIG"
+        build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-6.1.config" "$CI_CONFIG" "$NVME_CONFIG"
     fi
     if [[ "$KERNEL_VERSION" == @(all|6.18) ]]; then
-        build_al_kernel $PWD/guest_configs/microvm-kernel-ci-$ARCH-6.18.config "$CI_CONFIG" "$NVME_CONFIG"
+        build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-6.18.config" "$CI_CONFIG" "$NVME_CONFIG"
     fi
 
     # Build debug kernels
     FTRACE_CONFIG="$PWD/guest_configs/ftrace.config"
     DEBUG_CONFIG="$PWD/guest_configs/debug.config"
     OUTPUT_DIR=$OUTPUT_DIR/debug
-    mkdir -pv $OUTPUT_DIR
+    mkdir -pv "$OUTPUT_DIR"
     if [[ "$KERNEL_VERSION" == @(all|5.10) ]]; then
         build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-5.10.config" "$CI_CONFIG" "$NVME_CONFIG" "$FTRACE_CONFIG" "$DEBUG_CONFIG"
-        vmlinux_split_debuginfo $OUTPUT_DIR/vmlinux-5.10.*
+        vmlinux_split_debuginfo "$OUTPUT_FILE"
     fi
     if [[ "$KERNEL_VERSION" == @(all|6.1) ]]; then
         build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-6.1.config" "$CI_CONFIG" "$NVME_CONFIG" "$FTRACE_CONFIG" "$DEBUG_CONFIG"
-        vmlinux_split_debuginfo $OUTPUT_DIR/vmlinux-6.1.*
+        vmlinux_split_debuginfo "$OUTPUT_FILE"
     fi
     if [[ "$KERNEL_VERSION" == @(all|6.18) ]]; then
         build_al_kernel "$PWD/guest_configs/microvm-kernel-ci-$ARCH-6.18.config" "$CI_CONFIG" "$NVME_CONFIG" "$FTRACE_CONFIG" "$DEBUG_CONFIG"
-        vmlinux_split_debuginfo $OUTPUT_DIR/vmlinux-6.18.*
+        vmlinux_split_debuginfo "$OUTPUT_FILE"
     fi
 }
 
@@ -291,11 +303,15 @@ Available commands:
     rootfs
         Builds only the CI rootfs.
 
-    kernels [version]
+    kernels [version] [--kernel-source PATH]
         Builds our the currently supported CI kernels.
 
         version: Optionally choose a kernel version to build. Supported
                  versions are: 5.10, 5.10-no-acpi, 6.1 or 6.18.
+
+        --kernel-source PATH: Build a dedicated writable, pre-patched source tree.
+                 Requires an explicit supported version. Skips source checkout,
+                 cleaning and repository patches; replaces .config in place.
 
     help
         Displays the help message and exits.
@@ -320,12 +336,22 @@ function main {
         esac
     fi
 
+    if [[ "$MODE" == @(all|kernels) ]]; then
+        parse_kernel_args "$@"
+        [[ "$MODE" == kernels || -z "$KERNEL_SOURCE" ]] || die "--kernel-source requires the kernels command."
+    else
+        local arg
+        for arg in "$@"; do
+            [[ "$arg" != --kernel-source ]] || die "--kernel-source requires the kernels command."
+        done
+    fi
+
     set -x
 
     install_dependencies
 
     # Create the directory in which we will store the kernels and rootfs
-    mkdir -pv $OUTPUT_DIR
+    mkdir -pv "$OUTPUT_DIR"
 
     if [[ "$MODE" =~ (all|rootfs) ]]; then
         say "Building rootfs"
@@ -337,7 +363,7 @@ function main {
         build_al_kernels "$@"
     fi
 
-    tree -h $OUTPUT_DIR
+    tree -h "$OUTPUT_DIR"
 }
 
 main "$@"

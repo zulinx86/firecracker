@@ -87,10 +87,45 @@ subcommand allows passing a specific kernel version to build. For example:
 will build only the 6.1 kernel.
 
 Currently supported kernel versions are: `5.10`, `5.10-no-acpi` (same as 5.10
-but without ACPI support) and `6.1`.
+but without ACPI support), `6.1` and `6.18`.
 
 After the command finishes, the kernels along with the corresponding KConfig
 used will be stored under `resources/$(uname -m)`.
+
+### Build a Prepared Kernel Source Tree
+
+To build a source tree that you have already prepared and patched, pass an
+explicit supported version and the source directory:
+
+```bash
+./tools/devtool build_ci_artifacts kernels 6.18 --kernel-source "/path/to/prepared linux"
+```
+
+The version selects the repository's config stack; it does not check out or
+verify the source version. Use a dedicated writable tree matching that version,
+with all required patches already applied. Relative paths resolve from your
+current directory. Devtool bind-mounts the tree writable at `/kernel-source`.
+Paths containing spaces are supported; Docker volume paths cannot contain
+colons.
+
+The override skips cloning, tag selection, checkout, reset, clean, distclean and
+repository patch application. Builds overwrite `.config` and create build files
+in the supplied tree. Do not build concurrently in the same tree. The normal
+config order is the version/architecture config, `ci.config`, then
+`nvme.config`; debug builds append `ftrace.config` and `debug.config`. As with
+default builds, `5.10-no-acpi` is x86-only and has no debug variant.
+
+Normal artifacts remain in `resources/$(uname -m)` and debug artifacts in its
+`debug` subdirectory, named using the built kernel release. Existing artifacts
+for other releases are retained. Without the option, source preparation and
+build behavior are unchanged.
+
+On a host with the build script's supported package environment, invoke it
+directly (it installs dependencies and therefore requires root):
+
+```bash
+sudo ./resources/rebuild.sh kernels 6.18 --kernel-source "/path/to/prepared linux"
+```
 
 ## Creating a Linux rootfs Image
 

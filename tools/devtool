@@ -470,6 +470,7 @@ cmd_help() {
     echo ""
     echo "    build_ci_artifacts [all|rootfs|kernels]"
     echo "        Builds the rootfs and guest kernel artifacts we use for our CI."
+    echo "        kernels VERSION --kernel-source PATH builds a dedicated prepared source tree."
     echo "        Run './tools/devtool build_ci_artifacts help' for more details about the available commands."
     echo ""
     echo "    stage_ci_artifacts [all|rootfs|kernels]"
@@ -1431,15 +1432,35 @@ cmd_install() {
 }
 
 cmd_build_ci_artifacts() {
+    local build_args=("$@")
+    local source_mount=()
+    local arg kernel_source
+    for arg in "$@"; do
+        if [[ "$arg" == --kernel-source ]]; then
+            [[ $# -eq 4 && "$1" == kernels && "$3" == --kernel-source && -n "$4" ]] || die "Usage: build_ci_artifacts kernels VERSION --kernel-source PATH"
+            [[ "$2" == @(5.10|5.10-no-acpi|6.1|6.18) ]] || die "Unsupported kernel version: '$2'."
+            [[ "$(uname -m)" != aarch64 || "$2" != 5.10-no-acpi ]] || die "5.10-no-acpi is only supported on x86_64."
+            kernel_source=$4
+            [[ -d "$kernel_source" && -w "$kernel_source" && -f "$kernel_source/Makefile" && -d "$kernel_source/scripts/kconfig" ]] || die "Expected a writable prepared kernel source tree: '$kernel_source'."
+            kernel_source=$(cd "$kernel_source" && pwd -P)
+            # Docker volume syntax uses colons as separators.
+            [[ "$kernel_source" != *:* ]] || die "Kernel source path cannot contain a colon."
+            source_mount=(--volume "$kernel_source:/kernel-source:z")
+            build_args=(kernels "$2" --kernel-source /kernel-source)
+            break
+        fi
+    done
+
     # Check prerequisites
     ensure_devctr
 
     # We need to run nested Docker here, so run this container as privileged.
     run_devctr \
         --privileged \
+        "${source_mount[@]}" \
         --workdir "$CTR_FC_ROOT_DIR" \
         -- \
-        ./resources/rebuild.sh "$@"
+        ./resources/rebuild.sh "${build_args[@]}"
     local ret=$?
     cmd_fix_perms
     return $ret
