@@ -39,8 +39,17 @@ jobs:
             echo "is_newer=false" >> $GITHUB_OUTPUT;
           fi
  
-      - name: Check if issue exists
+      - name: Check if issues are enabled
         if: steps.semver_check.outputs.is_newer == 'true' # New release has higher semantic version
+        id: issues_enabled
+        run: |
+          ENABLED=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}" | \
+          jq -r '.has_issues')
+          echo "enabled=$ENABLED" >> $GITHUB_OUTPUT
+
+      - name: Check if issue exists
+        if: steps.semver_check.outputs.is_newer == 'true' && steps.issues_enabled.outputs.enabled == 'true'
         id: issue_check
         run: |
           ISSUES=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -50,7 +59,7 @@ jobs:
 
       - name: Create issue for new release
         id: create_issue
-        if: steps.semver_check.outputs.is_newer == 'true' && steps.issue_check.outputs.exists == '0' # No existing issue for new version
+        if: steps.semver_check.outputs.is_newer == 'true' && steps.issues_enabled.outputs.enabled == 'true' && steps.issue_check.outputs.exists == '0' # No existing issue for new version
         run: |
           gh issue create \
             --title "chore(deps): update libseccomp to ${{ steps.latest.outputs.version }}" \
@@ -67,3 +76,8 @@ jobs:
             --label "dependencies"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Warn if issues are disabled
+        if: steps.semver_check.outputs.is_newer == 'true' && steps.issues_enabled.outputs.enabled != 'true'
+        run: |
+          echo "::warning::A new libseccomp release (${{ steps.latest.outputs.version }}) is available, but issues are disabled in this repository. Please update tools/devctr/Dockerfile manually."
