@@ -147,7 +147,7 @@ impl SyncFileEngine {
     }
 
     pub fn discard(&mut self, range: (u64, u32)) -> Result<u32, SyncIoError> {
-        file_discard_range(&self.file, range).map_err(SyncIoError::Discard)
+        file_discard_range(self.file(), range).map_err(SyncIoError::Discard)
     }
 }
 

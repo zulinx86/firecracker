@@ -16,8 +16,8 @@ use crate::logger::{LoggerConfig, info};
 use crate::mmds;
 use crate::mmds::data_store::{Mmds, MmdsVersion};
 use crate::mmds::ns::MmdsNetworkStack;
-use crate::utils::mib_to_bytes;
 use crate::utils::net::ipv4addr::is_link_local_valid;
+use crate::utils::{mib_to_bytes, u32_mib_to_bytes, u64_to_usize};
 use crate::vmm_config::TokenBucketConfig;
 use crate::vmm_config::balloon::*;
 use crate::vmm_config::boot_source::{
@@ -543,7 +543,7 @@ impl VmResources {
     /// Gets the size of the hotpluggable guest memory, in bytes
     pub fn hotplug_memory_size(&self) -> usize {
         mib_to_bytes(self.memory_hotplug.as_ref().map_or(0, |memory_hotplug| {
-            mib_to_bytes(memory_hotplug.total_size_mib)
+            u64_to_usize(u32_mib_to_bytes(memory_hotplug.total_size_mib))
         }))
     }
 
@@ -582,11 +582,7 @@ impl VmResources {
             None => {
                 if self.vhost_user_devices_used() {
                     let memfd = Arc::new(
-                        create_memfd(
-                            size,
-                            self.machine_config.huge_pages.into(),
-                        )?
-                        .into_file(),
+                        create_memfd(size, self.machine_config.huge_pages.into())?.into_file(),
                     );
                     memory::file_shared(
                         memfd,
