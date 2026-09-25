@@ -332,7 +332,7 @@ impl VirtioDevice for Entropy {
     fn kick(&mut self) {
         if self.is_activated() {
             info!("kick entropy {}.", self.id());
-            self.process_virtio_queues();
+            let _ = self.process_virtio_queues();
         }
     }
 
