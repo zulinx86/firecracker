@@ -888,12 +888,15 @@ impl InterruptMetrics {
 pub struct VmmMetrics {
     /// Metric for signaling a panic has occurred.
     pub panic_count: SharedStoreMetric,
+    /// Number of invalid fault replies from the UFFD handler that were dropped.
+    pub invalid_fault_replies: SharedIncMetric,
 }
 impl VmmMetrics {
     /// Const default construction.
     pub const fn new() -> Self {
         Self {
             panic_count: SharedStoreMetric::new(),
+            invalid_fault_replies: SharedIncMetric::new(),
         }
     }
 }

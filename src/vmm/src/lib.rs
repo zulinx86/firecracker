@@ -151,7 +151,7 @@ use crate::devices::virtio::net::Net;
 use crate::devices::virtio::pmem::device::Pmem;
 use crate::devices::virtio::rng::Entropy;
 use crate::devices::virtio::vsock::{Vsock, VsockUnixBackend};
-use crate::logger::{METRICS, MetricsError, log_dev_preview_warning};
+use crate::logger::{IncMetric, METRICS, MetricsError, log_dev_preview_warning};
 use crate::mmds::data_store::Mmds;
 use crate::persist::{FaultReply, FaultRequest, MicrovmState, MicrovmStateError, VmInfo};
 use crate::rate_limiter::BucketUpdate;
@@ -374,9 +374,10 @@ fn validate_fault_reply_vcpu(
 /// The UFFD handler is trusted, but a bug in it can still produce an invalid reply. Such a
 /// reply is dropped instead of panicking, because the VM can keep running: if a valid reply
 /// for the same fault arrives later, the waiting vCPU or guest task is unblocked. The error
-/// is logged so that the user can decide whether to stop Firecracker.
+/// is logged and counted so that the user can decide whether to stop Firecracker.
 fn drop_invalid_fault_reply(fault_reply: &FaultReply, err: InvalidFaultReply) {
     error!("Dropping invalid fault reply from UFFD handler ({err}): {fault_reply:?}");
+    METRICS.vmm.invalid_fault_replies.inc();
 }
 
 /// Contains the state and associated methods required for the Firecracker VMM.
@@ -1235,8 +1236,9 @@ mod tests {
     #[test]
     fn test_invalid_fault_replies_are_dropped() {
         // `default_vmm()` is not secret free and has no vCPU fds, so every reply below is
-        // invalid. Each socket must consume all of them without panicking.
+        // invalid. Each socket must consume and count all of them without panicking.
         let mut vmm = default_vmm();
+        let dropped_before = METRICS.vmm.invalid_fault_replies.count();
 
         let (broker, mut handler) = broker_pair();
         vmm.uffd_socket = Some(broker);
@@ -1262,6 +1264,11 @@ mod tests {
                 .unwrap()
                 .next()
                 .is_none()
+        );
+
+        assert_eq!(
+            METRICS.vmm.invalid_fault_replies.count() - dropped_before,
+            4
         );
     }
 }
