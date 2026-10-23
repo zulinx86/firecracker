@@ -153,7 +153,7 @@ use crate::devices::virtio::rng::Entropy;
 use crate::devices::virtio::vsock::{Vsock, VsockUnixBackend};
 use crate::logger::{METRICS, MetricsError, log_dev_preview_warning};
 use crate::mmds::data_store::Mmds;
-use crate::persist::{FaultRequest, MicrovmState, MicrovmStateError, VmInfo};
+use crate::persist::{FaultReply, FaultRequest, MicrovmState, MicrovmStateError, VmInfo};
 use crate::rate_limiter::BucketUpdate;
 use crate::resources::VmmConfig;
 use crate::rpc_interface::VmmActionError;
@@ -308,6 +308,75 @@ pub enum DumpCpuConfigError {
     DumpCpuConfig(#[from] vcpu::VcpuError),
     /// Operation not allowed: {0}
     NotAllowed(String),
+}
+
+/// Reason for dropping a [`FaultReply`] received from the UFFD handler.
+#[derive(Debug, PartialEq, Eq, thiserror::Error, displaydoc::Display)]
+enum InvalidFaultReply {
+    /// KVM userfault is not enabled for this VM, so no vCPU waits for a sync fault reply
+    UserfaultDisabled,
+    /// vCPU index {0} is out of range (the VM has {1} vCPUs)
+    VcpuOutOfRange(u32, usize),
+    /// APF fault reply does not carry the faulting GPA
+    MissingGpa,
+}
+
+/// Validates a sync [`FaultReply`] and returns the index of the vCPU to wake up.
+///
+/// # Arguments
+///
+/// * `fault_reply` - Reply received on the UFFD socket.
+/// * `userfault_enabled` - Whether KVM userfault is enabled for this VM.
+/// * `vcpu_count` - Number of vCPUs of this VM.
+fn validate_sync_fault_reply(
+    fault_reply: &FaultReply,
+    userfault_enabled: bool,
+    vcpu_count: usize,
+) -> Result<usize, InvalidFaultReply> {
+    if !userfault_enabled {
+        return Err(InvalidFaultReply::UserfaultDisabled);
+    }
+    validate_fault_reply_vcpu(fault_reply, vcpu_count)
+}
+
+/// Validates an APF [`FaultReply`] and returns the vCPU index and the faulting GPA.
+///
+/// # Arguments
+///
+/// * `fault_reply` - Reply received on the APF socket.
+/// * `vcpu_count` - Number of vCPUs of this VM.
+fn validate_apf_fault_reply(
+    fault_reply: &FaultReply,
+    vcpu_count: usize,
+) -> Result<(usize, u64), InvalidFaultReply> {
+    let vcpu = validate_fault_reply_vcpu(fault_reply, vcpu_count)?;
+    let gpa = fault_reply.gpa.ok_or(InvalidFaultReply::MissingGpa)?;
+    Ok((vcpu, gpa))
+}
+
+fn validate_fault_reply_vcpu(
+    fault_reply: &FaultReply,
+    vcpu_count: usize,
+) -> Result<usize, InvalidFaultReply> {
+    let vcpu = fault_reply.vcpu as usize;
+    if vcpu < vcpu_count {
+        Ok(vcpu)
+    } else {
+        Err(InvalidFaultReply::VcpuOutOfRange(
+            fault_reply.vcpu,
+            vcpu_count,
+        ))
+    }
+}
+
+/// Drops an invalid [`FaultReply`] from the UFFD handler.
+///
+/// The UFFD handler is trusted, but a bug in it can still produce an invalid reply. Such a
+/// reply is dropped instead of panicking, because the VM can keep running: if a valid reply
+/// for the same fault arrives later, the waiting vCPU or guest task is unblocked. The error
+/// is logged so that the user can decide whether to stop Firecracker.
+fn drop_invalid_fault_reply(fault_reply: &FaultReply, err: InvalidFaultReply) {
+    error!("Dropping invalid fault reply from UFFD handler ({err}): {fault_reply:?}");
 }
 
 /// Contains the state and associated methods required for the Firecracker VMM.
@@ -869,7 +938,14 @@ impl Vmm {
             .clone();
         let socket = self.uffd_socket.as_mut().unwrap();
         for fault_reply in socket.by_ref() {
-            kvm_vm.vcpus_handles()[fault_reply.vcpu as usize].send_userfault_resolved();
+            let vcpus_handles = kvm_vm.vcpus_handles();
+            // Only secret free VMs enable KVM userfault and create the condvars that vCPUs
+            // wait on for sync fault replies.
+            match validate_sync_fault_reply(&fault_reply, kvm_vm.secret_free(), vcpus_handles.len())
+            {
+                Ok(vcpu) => vcpus_handles[vcpu].send_userfault_resolved(),
+                Err(err) => drop_invalid_fault_reply(&fault_reply, err),
+            }
         }
     }
 
@@ -879,9 +955,10 @@ impl Vmm {
         };
         let mut stream = apf_stream.lock().expect("APF stream lock poisoned");
         for fault_reply in stream.by_ref() {
-            let vcpu = fault_reply.vcpu as usize;
-            let gpa = fault_reply.gpa.unwrap();
-            self.apf_ready_ioctl(vcpu, gpa);
+            match validate_apf_fault_reply(&fault_reply, self.vcpu_fds.len()) {
+                Ok((vcpu, gpa)) => self.apf_ready_ioctl(vcpu, gpa),
+                Err(err) => drop_invalid_fault_reply(&fault_reply, err),
+            }
         }
     }
 
@@ -1082,5 +1159,109 @@ impl MutEventSubscriber for Vmm {
                 error!("Failed to register APF socket: {}", err);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+
+    use super::*;
+    use crate::builder::tests::default_vmm;
+    use crate::uffd_broker::UffdMessageBroker;
+
+    fn fault_reply(vcpu: u32, gpa: Option<u64>) -> FaultReply {
+        FaultReply {
+            vcpu,
+            offset: 0,
+            len: 4096,
+            flags: 0,
+            gpa,
+            zero: false,
+        }
+    }
+
+    /// Writes `fault_replies` to `stream` as length-prefixed bitcode frames.
+    fn send_fault_replies(stream: &mut UnixStream, fault_replies: &[FaultReply]) {
+        for fault_reply in fault_replies {
+            let encoded = bitcode::encode(fault_reply);
+            let len = u32::try_from(encoded.len()).unwrap();
+            stream.write_all(&len.to_le_bytes()).unwrap();
+            stream.write_all(&encoded).unwrap();
+        }
+    }
+
+    /// Returns a non-blocking broker and the peer stream that plays the UFFD handler.
+    fn broker_pair() -> (UffdMessageBroker, UnixStream) {
+        let (vmm_end, handler_end) = UnixStream::pair().unwrap();
+        vmm_end.set_nonblocking(true).unwrap();
+        (UffdMessageBroker::new(vmm_end), handler_end)
+    }
+
+    #[test]
+    fn test_validate_sync_fault_reply() {
+        assert_eq!(
+            validate_sync_fault_reply(&fault_reply(1, None), true, 2),
+            Ok(1)
+        );
+        assert_eq!(
+            validate_sync_fault_reply(&fault_reply(2, None), true, 2),
+            Err(InvalidFaultReply::VcpuOutOfRange(2, 2))
+        );
+        // A VM without KVM userfault never waits for sync fault replies, even for a valid vCPU.
+        assert_eq!(
+            validate_sync_fault_reply(&fault_reply(0, None), false, 2),
+            Err(InvalidFaultReply::UserfaultDisabled)
+        );
+    }
+
+    #[test]
+    fn test_validate_apf_fault_reply() {
+        assert_eq!(
+            validate_apf_fault_reply(&fault_reply(1, Some(0x1000)), 2),
+            Ok((1, 0x1000))
+        );
+        assert_eq!(
+            validate_apf_fault_reply(&fault_reply(2, Some(0x1000)), 2),
+            Err(InvalidFaultReply::VcpuOutOfRange(2, 2))
+        );
+        assert_eq!(
+            validate_apf_fault_reply(&fault_reply(0, None), 2),
+            Err(InvalidFaultReply::MissingGpa)
+        );
+    }
+
+    #[test]
+    fn test_invalid_fault_replies_are_dropped() {
+        // `default_vmm()` is not secret free and has no vCPU fds, so every reply below is
+        // invalid. Each socket must consume all of them without panicking.
+        let mut vmm = default_vmm();
+
+        let (broker, mut handler) = broker_pair();
+        vmm.uffd_socket = Some(broker);
+        send_fault_replies(
+            &mut handler,
+            &[fault_reply(0, None), fault_reply(u32::MAX, None)],
+        );
+        vmm.process_uffd_socket();
+        assert!(vmm.uffd_socket.as_mut().unwrap().next().is_none());
+
+        let (broker, mut handler) = broker_pair();
+        vmm.apf_stream = Some(Arc::new(Mutex::new(broker)));
+        send_fault_replies(
+            &mut handler,
+            &[fault_reply(0, None), fault_reply(0, Some(0x1000))],
+        );
+        vmm.process_apf_socket();
+        assert!(
+            vmm.apf_stream
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .next()
+                .is_none()
+        );
     }
 }
